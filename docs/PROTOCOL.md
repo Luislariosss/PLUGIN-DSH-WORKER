@@ -103,9 +103,11 @@ Reglas:
   proceso Host. Debe ser ruta absoluta existente; si no existe → 400.
 - `permission` opcional: `workspace-write` o `danger-full-access`. Omitido (y sin config) = no
   tocar el preset del perfil, que ya arranca en `workspace-write`.
-- `permission: 'danger-full-access'` en el body → **403** `permission/forbidden` salvo que el
-  plugin tenga `allowFullAccess: true` en su config (default `false`). Se valida antes de crear la
-  sesión. La config del plugin (`permission`) no se valida con este check.
+- Se valida el permiso **efectivo**: `body.permission ?? config.permission`. Si es
+  `danger-full-access` y el plugin no tiene `allowFullAccess: true` (default `false`) → **403**
+  `permission/forbidden`. Se valida antes de crear la sesión. Si el origen es la config, el mensaje
+  indica que `permission` de la config también requiere `allowFullAccess: true`. Al arrancar, si la
+  config tiene `permission: 'danger-full-access'` sin `allowFullAccess`, el plugin escribe un aviso en log.
 - `preset` opcional: id de agent preset de DSH; omitido = preset por defecto del perfil.
 - `workers` default `true`: el prompt enviado a DSH incluye la instrucción de usar Agent Teams.
 - `turns` empieza en 1 al crear la tarea y sube con cada follow-up. La tarea se cierra cuando la
@@ -164,8 +166,8 @@ host: '127.0.0.1'
 bridgeDir: '%USERPROFILE%\.dsh\claude-bridge'
 defaultCwd: null
 agentPreset: null
-permission: null            // null = no tocar; si no, 'workspace-write' | 'danger-full-access'
-allowFullAccess: false      // true = admitir permission 'danger-full-access' en POST /v1/tasks
+permission: null            // null = no tocar; si no, 'workspace-write' | 'danger-full-access' (requiere allowFullAccess: true)
+allowFullAccess: false      // true = admitir 'danger-full-access' en POST /v1/tasks (petición o config)
 maxConcurrent: 4
 clientTimeZone: 'America/Mexico_City'
 ```

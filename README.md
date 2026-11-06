@@ -169,8 +169,8 @@ son los de `readSettings` en `plugin/index.js`; un valor no válido se sustituye
     bridgeDir: 'C:\Users\<usuario>\.dsh\claude-bridge'   # default %USERPROFILE%\.dsh\claude-bridge
     defaultCwd: null            # default null: si la petición no manda cwd, el del proceso de DSH
     agentPreset: null           # default null = preset por defecto del perfil
-    permission: null            # default null = no tocar; 'workspace-write' | 'danger-full-access'
-    allowFullAccess: false      # default false; true = admitir permission 'danger-full-access' en las peticiones
+    permission: null            # null = no tocar; 'workspace-write' | 'danger-full-access' (requiere allowFullAccess: true)
+    allowFullAccess: false      # true = admitir 'danger-full-access', ya sea en la petición o en permission de esta config
     maxConcurrent: 4            # default 4; con esas tareas en curso, una nueva recibe 409
     clientTimeZone: America/Mexico_City   # default America/Mexico_City
     maxTaskMs: 21600000         # default 6 h; pasado ese tiempo la tarea se marca error
@@ -200,10 +200,10 @@ carpeta con la variable de entorno `DSH_BRIDGE_DIR` (la leen el MCP y el hook).
   prompts y seguimientos, consulta estado y cancela tareas (las tools de DSH siguen su propio sandbox
   y aprobaciones).
 - Las sesiones delegadas usan el preset de permisos del perfil (`workspace-write` por defecto).
-- `permission: 'danger-full-access'` en una petición se rechaza con **403** (`permission/forbidden`)
-  salvo que pongas `allowFullAccess: true` en la config del plugin. Es un ajuste explícito de Luis;
-  no lo actives por defecto. Ojo: el `permission` de la config del plugin no pasa por esa
-  comprobación, así que no lo pongas en `danger-full-access`.
+- El permiso **efectivo** de una sesión (el `permission` de la petición o, si no viene, el de la config)
+  se valida antes de crear la sesión: si es `danger-full-access` y no hay `allowFullAccess: true`, se
+  rechaza con **403** (`permission/forbidden`). Esto cubre tanto la petición como la config del plugin.
+  Es un ajuste explícito de Luis; no lo actives por defecto.
 - El permiso de Claude Code se concede **por herramienta** (las 7 reglas `mcp__dsh-bridge__dsh_*`
   listadas en la instalación), no a todo el servidor MCP: una herramienta nueva que se añada al MCP
   pedirá confirmación.
