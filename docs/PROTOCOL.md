@@ -88,7 +88,7 @@ interface BridgeEvent {
 | Método y ruta | Body | Respuesta |
 |---|---|---|
 | `GET /v1/health` | — | `{ ok: true, version: "1.0.0", pid, port, startedAt, tasks: { total, running, done, error } }` |
-| `POST /v1/tasks` | `{ prompt, cwd?, preset?, permission?, workers?, client?, title? }` | `Task` (201) |
+| `POST /v1/tasks` | `{ prompt, cwd?, preset?, permission?, workers?, client? }` | `Task` (201) |
 | `GET /v1/tasks` | — | `{ tasks: Task[] }` (máx. 100, más recientes primero) |
 | `GET /v1/tasks/:id` | — | `Task` |
 | `POST /v1/tasks/:id/wait` | `{ timeoutMs?: number }` | `Task` — bloquea hasta estado final o timeout |
@@ -205,8 +205,8 @@ Comportamiento:
   borra `state.json`).
 - Escribir `state.json` al escuchar; crear `token` con `crypto.randomBytes(32).toString('hex')`
   si falta (permiso 0o600).
-- Registrar el tool `dsh_bridge_status` (sin parámetros, `ctx.tools.register`) que devuelve
-  `{ running: true, port, stateFile, tasks: {...} }` — sirve para comprobar activación.
+- Comprobar la activación con `GET /v1/health` (el tool `dsh_bridge_status` que se planteó al principio
+  no está implementado).
 - Log con `console.error('[claude-bridge]', …)`.
 - Errores nunca tumban el Host: toda excepción por request → 500 JSON; un fallo del servidor
   se reporta por `console.error` y no relanza.
@@ -234,7 +234,7 @@ Tools (nombres estables):
 | `dsh_cancel` | `{ task_id }` | cancela |
 | `dsh_inbox` | `{ ack?: boolean }` | eventos de finalización pendientes; `ack:true` los marca leídos |
 
-- Leer `state.json` y `token` en cada llamada (el plugin puede reiniciarse con otro puerto).
+- Leer `state.json` y `token` con una caché de 2 s, y volver a leerlos si falla la conexión (el plugin puede reiniciarse con otro puerto).
 - HTTP con `fetch` y `AbortSignal.timeout(...)`; errores → `{ content: [{type:'text',text}], isError: true }`.
 - `dsh_delegate` hace polling: `POST /v1/tasks/:id/wait {timeoutMs:25000}` cada iteración hasta
   `done|error|cancelled|waiting-input` o agotar `wait_seconds`.

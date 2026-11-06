@@ -241,12 +241,11 @@ carpeta con la variable de entorno `DSH_BRIDGE_DIR` (la leen el MCP y el hook).
 
 ## Desarrollo
 
-El plugin se instala como enlace al directorio. Al editar `plugin/index.js`, el **HMR del perfil**
-sustituye el módulo en la siguiente recomposición: basta tocar
-`~/.dsh/profiles/desktop/cordis.patch.yml` (por ejemplo, añadiendo y quitando un comentario
-`# reload`) para que el Host cargue el código nuevo **sin reiniciar DSH**. Si el cambio toca
-`package.json`, `cordis.patch.yml` del bundle o la lista de bundles del perfil, usa el gestor de
-plugins (`remove_bundle` + `install_bundle`).
+El plugin se instala como enlace al directorio. Un cambio en `plugin/index.js` **no** se recarga
+solo de forma garantizada: reinstala el bundle (Plugins → quitar + instalar, o
+`remove_bundle` + `install_bundle`) para que el Host importe el módulo nuevo. Algunos builds de DSH
+pueden recargarlo al tocar `~/.dsh/profiles/desktop/cordis.patch.yml` (HMR del perfil), pero no
+está verificado; si lo pruebas en tu build, anótalo aquí.
 
 Contrato interno (endpoints, estados, eventos, tools MCP): [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
