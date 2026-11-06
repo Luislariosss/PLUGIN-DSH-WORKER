@@ -42,7 +42,7 @@ function readSettings(config) {
     typeof c.bridgeDir === 'string' && c.bridgeDir.length > 0
       ? c.bridgeDir
       : join(os.homedir(), '.dsh', 'claude-bridge')
-  return {
+  const settings = {
     port: Number.isInteger(c.port) && c.port > 0 && c.port < 65536 ? c.port : 49777,
     host: typeof c.host === 'string' && c.host.length > 0 ? c.host : '127.0.0.1',
     bridgeDir,
@@ -59,6 +59,13 @@ function readSettings(config) {
     maxTaskMs:
       Number.isInteger(c.maxTaskMs) && c.maxTaskMs > 0 ? c.maxTaskMs : 6 * 60 * 60 * 1000,
   }
+  if (settings.permission === 'danger-full-access' && !settings.allowFullAccess) {
+    log(
+      'AVISO: permission de la config del plugin es danger-full-access sin allowFullAccess: true. ' +
+        'Las sesiones sin permission explicito en la peticion se rechazaran con 403 hasta que lo habilites.',
+    )
+  }
+  return settings
 }
 
 class BridgeHttpError extends Error {
@@ -608,11 +615,18 @@ function createBridge(ctx, settings) {
     if (prompt.length > PROMPT_MAX) {
       throw new BridgeHttpError(400, 'prompt/too-long', `prompt mayor a ${PROMPT_MAX} caracteres`)
     }
-    if (body.permission === 'danger-full-access' && !settings.allowFullAccess) {
+    // Permiso EFECTIVO: el de la peticion si viene, si no el de la config. Se valida antes de crear la sesion.
+    const requestedPermission =
+      typeof body.permission === 'string' && body.permission.length > 0 ? body.permission : null
+    const permission = requestedPermission ?? settings.permission
+    if (permission === 'danger-full-access' && settings.allowFullAccess !== true) {
+      const fromConfig = requestedPermission === null
       throw new BridgeHttpError(
         403,
         'permission/forbidden',
-        'danger-full-access requiere habilitarlo en el plugin: allowFullAccess: true en la config de claude-bridge',
+        fromConfig
+          ? 'danger-full-access viene de la config del plugin (permission) y requiere tambien allowFullAccess: true en la config de claude-bridge'
+          : 'danger-full-access requiere habilitarlo en el plugin: allowFullAccess: true en la config de claude-bridge',
       )
     }
     if (runningCount() >= settings.maxConcurrent) {
@@ -625,9 +639,6 @@ function createBridge(ctx, settings) {
     const cwd = await checkCwd(typeof body.cwd === 'string' ? body.cwd : null)
     const preset =
       (typeof body.preset === 'string' && body.preset.length > 0 ? body.preset : null) ?? settings.agentPreset
-    const permission =
-      (typeof body.permission === 'string' && body.permission.length > 0 ? body.permission : null) ??
-      settings.permission
     const workers = body.workers === false ? false : true
     const client = typeof body.client === 'string' && body.client.length > 0 ? body.client : 'claude-code'
 
