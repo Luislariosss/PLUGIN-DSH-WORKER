@@ -12,7 +12,7 @@
  */
 import http from 'node:http'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { mkdir, readFile, writeFile, appendFile, rm, stat } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, appendFile, rename, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import os from 'node:os'
 
@@ -25,6 +25,10 @@ const EVENT_KINDS = new Set(['done', 'error', 'waiting-input', 'cancelled'])
 const FINAL_STATUSES = new Set(['done', 'error', 'cancelled'])
 const MAX_BODY_BYTES = 1024 * 1024
 const PROMPT_MAX = 60000
+const MAX_PERSISTED_TASKS = 200
+const SAVE_DEBOUNCE_MS = 300
+const TASK_STATUSES = new Set(['queued', 'running', 'waiting-input', 'done', 'error', 'cancelled'])
+const TASK_ID_RE = /^tsk_[0-9a-f]{12}$/
 
 function log(...args) {
   console.error(LOG, ...args)
@@ -253,10 +257,85 @@ function createBridge(ctx, settings) {
     state: join(settings.bridgeDir, 'state.json'),
     events: join(settings.bridgeDir, 'events.jsonl'),
     cursor: join(settings.bridgeDir, 'cursor.json'),
+    tasks: join(settings.bridgeDir, 'tasks.json'),
   }
 
   async function ensureBridgeDir() {
     await mkdir(paths.dir, { recursive: true })
+  }
+
+  let saveTimer = null
+  let saveChain = Promise.resolve()
+
+  /**
+   * Escribe tasks.json (las MAX_PERSISTED_TASKS más recientes) de forma atómica:
+   * archivo temporal + rename. Las escrituras se encadenan para no solaparse.
+   */
+  function persistNow() {
+    const payload = toJson({
+      version: 1,
+      savedAt: now(),
+      tasks: [...tasks.values()]
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, MAX_PERSISTED_TASKS),
+    })
+    saveChain = saveChain.then(async () => {
+      const tmp = `${paths.tasks}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
+      try {
+        await ensureBridgeDir()
+        await writeFile(tmp, payload, 'utf8')
+        await rename(tmp, paths.tasks)
+      } catch (error) {
+        log('no se pudo escribir tasks.json:', error)
+        await rm(tmp, { force: true }).catch(() => {})
+      }
+    })
+    return saveChain
+  }
+
+  /** Debounce corto: agrupa cambios de estado seguidos en una sola escritura. */
+  function scheduleSave() {
+    if (saveTimer) return
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      persistNow().catch((error) => log('persistNow falló:', error))
+    }, SAVE_DEBOUNCE_MS)
+    if (typeof saveTimer.unref === 'function') saveTimer.unref()
+  }
+
+  function isPersistedTask(value) {
+    return (
+      value !== null &&
+      typeof value === 'object' &&
+      typeof value.taskId === 'string' &&
+      TASK_ID_RE.test(value.taskId) &&
+      typeof value.sessionId === 'string' &&
+      value.sessionId.length > 0 &&
+      TASK_STATUSES.has(value.status) &&
+      typeof value.createdAt === 'number'
+    )
+  }
+
+  /** Repuebla el Map desde tasks.json (máximo MAX_PERSISTED_TASKS, las más recientes). */
+  async function loadTasks() {
+    let parsed
+    try {
+      parsed = JSON.parse(await readFile(paths.tasks, 'utf8'))
+    } catch (error) {
+      if (error?.code !== 'ENOENT') log('tasks.json ilegible, se ignora:', error.message)
+      return 0
+    }
+    const list = Array.isArray(parsed?.tasks) ? parsed.tasks : []
+    const restored = list
+      .filter(isPersistedTask)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, MAX_PERSISTED_TASKS)
+    for (const task of restored) {
+      // 'queued' no lo sondea el poller: al recargar lo tratamos como en curso para que settle() lo reevalúe.
+      if (task.status === 'queued') task.status = 'running'
+      tasks.set(task.taskId, task)
+    }
+    return restored.length
   }
 
   async function loadToken() {
@@ -372,6 +451,7 @@ function createBridge(ctx, settings) {
     } else if (status === 'cancelled') {
       await appendEvent('cancelled', task, 'Tarea cancelada')
     }
+    scheduleSave()
     return task
   }
 
@@ -380,6 +460,7 @@ function createBridge(ctx, settings) {
     if (task.status !== 'waiting-input') {
       task.status = 'waiting-input'
       touch(task)
+      scheduleSave()
     }
     if (!task.waitingNotified) {
       task.waitingNotified = true
@@ -418,7 +499,10 @@ function createBridge(ctx, settings) {
         return task
       }
       if (row.running === true || row.agentAvailable === true) {
-        if (task.status === 'waiting-input') task.status = 'running'
+        if (task.status === 'waiting-input') {
+          task.status = 'running'
+          scheduleSave()
+        }
         task.seenLive = true
         touch(task)
         return task
@@ -432,7 +516,10 @@ function createBridge(ctx, settings) {
 
     const queue = Array.isArray(state.queue) ? state.queue : []
     if (state.running || state.active || queue.length > 0) {
-      if (task.status === 'waiting-input') task.status = 'running'
+      if (task.status === 'waiting-input') {
+        task.status = 'running'
+        scheduleSave()
+      }
       touch(task)
       return task
     }
@@ -548,6 +635,7 @@ function createBridge(ctx, settings) {
       waitingNotified: false,
     }
     tasks.set(task.taskId, task)
+    scheduleSave()
 
     try {
       await ctx.sessionController.prompt({
@@ -564,6 +652,7 @@ function createBridge(ctx, settings) {
 
     task.status = 'running'
     touch(task)
+    scheduleSave()
     log('tarea creada', task.taskId, '→', sessionId, 'cwd=', cwd)
     return task
   }
@@ -598,6 +687,7 @@ function createBridge(ctx, settings) {
       if (result && result.reason === 'input-required') {
         task.status = 'waiting-input'
         touch(task)
+        scheduleSave()
         if (!task.waitingNotified) {
           task.waitingNotified = true
           await appendEvent('waiting-input', task, 'DSH pide aprobación/pregunta en su GUI')
@@ -641,6 +731,7 @@ function createBridge(ctx, settings) {
     task.waitingNotified = false
     task.turns = (task.turns ?? 0) + 1
     touch(task)
+    scheduleSave()
     return task
   }
 
@@ -835,6 +926,8 @@ function createBridge(ctx, settings) {
   async function start() {
     token = await loadToken()
     lastSeq = await loadEventsSeq()
+    const restored = await loadTasks()
+    if (restored > 0) log(`tareas restauradas desde tasks.json: ${restored}`)
     const candidatePorts = []
     for (let i = 0; i < 10; i += 1) candidatePorts.push(settings.port + i)
     const listened = await listen(candidatePorts)
@@ -863,6 +956,11 @@ function createBridge(ctx, settings) {
       await new Promise((resolve) => server.close(() => resolve()))
       server = null
     }
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    await persistNow()
     listening = false
     try {
       await rm(paths.state, { force: true })
@@ -875,6 +973,7 @@ function createBridge(ctx, settings) {
   /** Instala una tarea ya creada por fuera (no usado; reservado para pruebas). */
   function adopt(task) {
     tasks.set(task.taskId, task)
+    scheduleSave()
     return task
   }
 

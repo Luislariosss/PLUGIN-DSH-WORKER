@@ -30,6 +30,7 @@ Claude recibe el resultado y los avisos de finalización.
 | `state.json` | plugin al arrancar / dispose | `{ "version": 1, "host": "127.0.0.1", "port": 49777, "pid": 1234, "startedAt": 1762... }` |
 | `events.jsonl` | plugin | una línea JSON por evento de finalización (append-only) |
 | `cursor.json` | MCP (`dsh_inbox`, hook) | `{ "ackedSeq": 12 }` |
+| `tasks.json` | plugin (debounce ~300 ms, escritura atómica) | `{ "version": 1, "savedAt": 1762..., "tasks": Task[] }` con las 200 tareas más recientes (ver §2.1) |
 
 El plugin borra `state.json` en dispose. Si `state.json` no existe o el health check falla, el
 MCP debe responder con un error claro: *"El plugin dsh-claude-bridge no está corriendo en
@@ -112,6 +113,23 @@ Reglas:
 - La sesión es **real y visible** en DSH: aparece en la lista de sesiones y en el GUI.
 - Un `turn/end` o idle del agente marca la tarea `done` y escribe **un** evento `done` en
   `events.jsonl` con `summary` = últimos ≤2000 chars del texto final.
+
+### 2.1 Persistencia de tareas (`tasks.json`)
+
+- El plugin guarda el Map de tareas en `<bridgeDir>\tasks.json` para que sobreviva a un reinicio
+  de DSH. Se escribe cuando una tarea se crea o cambia de estado (`queued/running/waiting-input`
+  → final, `running` tras un seguimiento, etc.), con debounce de ~300 ms.
+- La escritura es atómica: se escribe `tasks.json.<pid>.<hex>.tmp` y luego `rename` sobre
+  `tasks.json`. Si falla, se registra en el log y el archivo anterior queda intacto.
+- Se guardan solo las **200 tareas más recientes** (por `createdAt`). Como `result.text` puede
+  ser grande, el archivo puede pesar varios MB.
+- Al `start()` se carga el archivo, se descartan entradas con forma inválida y se repuebla el Map.
+  Las tareas `queued`/`running`/`waiting-input` se conservan para que el poller (`settle`) las
+  reevalúe; `queued` se trata como `running` porque el poller no sondea `queued`. Si la sesión
+  de DSH ya no existe, el camino existente la cierra con error (`La sesión de DSH ya no está viva`).
+- Las tareas finales (`done/error/cancelled`) se restauran tal cual: `dsh_result` sigue
+  devolviendo su resultado tras reiniciar.
+- `tasks.json` está en `.gitignore`: contiene texto de tareas y resultados.
 
 ## 3. Implementación del plugin Host
 

@@ -16,6 +16,8 @@ token
 state.json
 events.jsonl
 cursor.json
+tasks.json
+tasks.json.*.tmp
 
 # Configs locales de prueba
 tests/claude-mcp.local.json
