@@ -29,6 +29,8 @@ const MAX_PERSISTED_TASKS = 200
 const SAVE_DEBOUNCE_MS = 300
 const TASK_STATUSES = new Set(['queued', 'running', 'waiting-input', 'done', 'error', 'cancelled'])
 const TASK_ID_RE = /^tsk_[0-9a-f]{12}$/
+// Tras un seguimiento, un cierre sin evidencia durable no se acepta antes de este plazo.
+const FOLLOWUP_GRACE_MS = 2000
 
 function log(...args) {
   console.error(LOG, ...args)
@@ -440,6 +442,8 @@ function createBridge(ctx, settings) {
     task.status = status
     touch(task)
     task.completedAt = task.updatedAt
+    task.followupAt = undefined
+    task.lastResultText = undefined
     if (status === 'done') {
       const summary = (text ?? '').trim()
       task.result = { text: summary.slice(0, 200000) }
@@ -469,6 +473,26 @@ function createBridge(ctx, settings) {
     return task
   }
 
+  /**
+   * Texto válido para cerrar la tarea: vacío si es el resultado del turno anterior
+   * (tras un seguimiento, lastAssistantText puede devolverlo antes que el turno nuevo).
+   */
+  function freshText(task, text) {
+    if (text === null || text === undefined) return ''
+    if (task.followupAt !== undefined && text === task.lastResultText) return ''
+    return text
+  }
+
+  /**
+   * Cierre SIN evidencia durable (fallbacks de state()/list()): tras un seguimiento no vale si el
+   * texto es igual al resultado anterior o si aún no pasó FOLLOWUP_GRACE_MS desde followupAt.
+   */
+  function nonDurableCloseIsStale(task, text) {
+    if (task.followupAt === undefined) return false
+    if (text !== null && text === task.lastResultText) return true
+    return now() - task.followupAt < FOLLOWUP_GRACE_MS
+  }
+
   /** Comprueba si la sesión ya terminó (evidencia durable primero) y cierra la tarea. */
   async function settle(task) {
     if (FINAL_STATUSES.has(task.status)) return task
@@ -481,7 +505,9 @@ function createBridge(ctx, settings) {
     const verdict = evaluateTail(task, tail)
     if (verdict) {
       if (verdict.status === 'done') {
-        const text = verdict.text && verdict.text.length > 0 ? verdict.text : lastAssistantText(ctx, task.sessionId) ?? ''
+        // Evidencia durable: turn/end con turn >= task.turns, así que el turno es el nuevo.
+        const text =
+          verdict.text && verdict.text.length > 0 ? verdict.text : freshText(task, lastAssistantText(ctx, task.sessionId))
         return finalize(task, 'done', text)
       }
       if (verdict.status === 'error') return finalize(task, 'error', null, verdict.message)
@@ -509,7 +535,7 @@ function createBridge(ctx, settings) {
       }
       if (task.seenLive === true) {
         const liveText = lastAssistantText(ctx, task.sessionId)
-        if (liveText !== null) return finalize(task, 'done', liveText)
+        if (liveText !== null && !nonDurableCloseIsStale(task, liveText)) return finalize(task, 'done', liveText)
       }
       return task
     }
@@ -525,7 +551,7 @@ function createBridge(ctx, settings) {
     }
     // Fallback si la lectura durable no está disponible: último mensaje vivo del asistente.
     const text = lastAssistantText(ctx, task.sessionId)
-    if (text !== null) return finalize(task, 'done', text)
+    if (text !== null && !nonDurableCloseIsStale(task, text)) return finalize(task, 'done', text)
     return task
   }
 
@@ -718,6 +744,8 @@ function createBridge(ctx, settings) {
     if (FINAL_STATUSES.has(task.status) && task.status !== 'done') {
       throw new BridgeHttpError(409, 'task/closed', `La tarea está en estado ${task.status} y no admite seguimiento`)
     }
+    // Resultado del turno anterior: settle() no debe cerrar la tarea con él como si fuera el nuevo.
+    const previousText = typeof task.result?.text === 'string' ? task.result.text : null
     await ctx.sessionController.prompt({
       requestId: requestId(),
       sessionId: task.sessionId,
@@ -726,6 +754,8 @@ function createBridge(ctx, settings) {
       clientTimeZone: settings.clientTimeZone,
     }, new AbortController().signal)
     task.status = 'running'
+    task.followupAt = now()
+    task.lastResultText = previousText
     task.completedAt = undefined
     task.error = undefined
     task.waitingNotified = false

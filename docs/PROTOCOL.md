@@ -107,6 +107,12 @@ Reglas:
 - `workers` default `true`: el prompt enviado a DSH incluye la instrucción de usar Agent Teams.
 - `turns` empieza en 1 al crear la tarea y sube con cada follow-up. La tarea se cierra cuando la
   cola durable muestra un `turn/end` con `turn >= turns` (así no se cierra por el turno viejo).
+- Seguimientos (`POST /v1/tasks/:id/messages`): al enviar el prompt la tarea pasa a `running` y
+  el puente guarda, solo internamente, `followupAt` (epoch ms) y `lastResultText` (el `result.text`
+  del turno anterior). Un cierre **sin** evidencia durable (fallback de `state()`/`list()` con el
+  último texto del asistente) no se acepta si el texto es igual a `lastResultText` o si han pasado
+  menos de 2 s desde `followupAt`. Un `turn/end` con `turn >= turns` sí cierra la tarea. Ambos
+  campos se limpian al finalizar. No aparecen en `Task`.
 - Máximo de tareas `running` simultáneas: `config.maxConcurrent` (default 4) → 409.
 - `wait` con `timeoutMs` limitado a 1..120000; default 25000. Si la tarea sigue `running`,
   responde `Task` sin finalizar (el cliente vuelve a llamar).
