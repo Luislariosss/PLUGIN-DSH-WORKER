@@ -74,6 +74,50 @@ node "<repo>\tests\e2e.mjs"           # HTTP del plugin contra DSH
 node "<repo>\tests\mcp-e2e.mjs"       # MCP completo contra DSH
 ```
 
+Sin Claude Code de por medio, el puente se comprueba solo con HTTP:
+
+```powershell
+$dir = "$env:USERPROFILE\.dsh\claude-bridge"
+$s = Get-Content "$dir\state.json" | ConvertFrom-Json
+$t = (Get-Content "$dir\token").Trim()
+Invoke-RestMethod "http://$($s.host):$($s.port)/v1/health" -Headers @{ Authorization = "Bearer $t" }
+```
+
+`/v1/_diag?sessionId=<id>` devuelve, además de la cola durable de esa sesión, la superficie real de
+`sessionController` en tu build (ver [Compatibilidad](#compatibilidad-con-versiones-de-dsh)).
+
+> Nota: si lanzas `claude mcp list` **dentro** del sandbox de DSH, los servidores MCP stdio pueden
+> salir como `Failed to connect — EPERM`; es el sandbox bloqueando la creación de pipes para
+> procesos hijos, no el puente. Fuera de él salen `Connected`.
+
+## Compatibilidad con versiones de DSH
+
+El plugin habla con el servicio `sessionController` del Host, y su superficie cambia entre builds de
+DeepSeek Harness. `plugin/index.js` detecta en caliente qué métodos existen
+(`typeof ctx.sessionController.x === 'function'`) y usa el camino que haya:
+
+| Necesidad | Contrato original (`docs/PROTOCOL.md`) | Builds 0.2.x (`dsh-api-session-controller`) |
+|---|---|---|
+| Crear sesión / admitir prompt / cancelar | `create()`, `prompt()`, `cancel()` | igual |
+| Cola durable de la sesión | `events({ address, maxMessages })` | `inspect(sessionId, signal)` → `{ meta, events }` |
+| Señal viva (¿corriendo? ¿cola?) | `state({ sessionId })` → `{ running, pendingInput, queue }` | fila de `list({})` → `{ running, agentAvailable, … }` |
+| Esperar el final | `wait({ sessionId, timeoutMs })` | sondeo de `inspect()`/`list()` |
+
+No hay que configurar nada: el mismo bundle sirve para ambos. Si tu build no expone
+`state`/`wait`/`events`, el puente cierra la tarea con la evidencia durable (`turn/end` +
+último `assistant/message`) y usa `list()` para saber si la sesión sigue viva, en vez de marcar
+error "La sesión de DSH ya no está viva".
+
+Qué expone tu DSH ahora mismo:
+
+```powershell
+$dir = "$env:USERPROFILE\.dsh\claude-bridge"
+$s = Get-Content "$dir\state.json" | ConvertFrom-Json
+$t = (Get-Content "$dir\token").Trim()
+$d = Invoke-RestMethod "http://$($s.host):$($s.port)/v1/_diag?sessionId=$([guid]::NewGuid())" -Headers @{ Authorization = "Bearer $t" }
+$d.api    # { create: 'function', inspect: 'function', state: 'undefined', … }
+```
+
 ## Uso
 
 En Claude Code, en cualquier carpeta:
@@ -135,8 +179,12 @@ solo. Se puede forzar otra carpeta con `DSH_BRIDGE_DIR`.
 
 ## Desarrollo
 
-El plugin se instala como enlace al directorio: si editas `plugin/index.js` hay que reinstalar el
-bundle (`plugin_manager remove_bundle` + `install_bundle`) para que el Host cargue el módulo nuevo.
+El plugin se instala como enlace al directorio. Al editar `plugin/index.js`, el **HMR del perfil**
+sustituye el módulo en la siguiente recomposición: basta tocar
+`~/.dsh/profiles/desktop/cordis.patch.yml` (por ejemplo, añadiendo y quitando un comentario
+`# reload`) para que el Host cargue el código nuevo **sin reiniciar DSH**. Si el cambio toca
+`package.json`, `cordis.patch.yml` del bundle o la lista de bundles del perfil, usa el gestor de
+plugins (`remove_bundle` + `install_bundle`).
 
 Contrato interno (endpoints, estados, eventos, tools MCP): [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 

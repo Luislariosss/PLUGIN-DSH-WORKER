@@ -157,6 +157,18 @@ Servicios que usa:
   `role === 'assistant'` y concatenar los bloques `content[].type === 'text'` (`content[].text`).
   Tambi���n aceptar `{ type: 'text', text }` o string. Si no hay, `expires` → `result.text = ''`.
 
+**Disponibilidad real según el build.** Con `@deepseek-ai/dsh-api-session-controller` (DSH 0.2.x)
+existen `create`, `prompt` y `cancel`, pero **no** `events`, `state` ni `wait`. El plugin comprueba
+`typeof ctx.sessionController.x === 'function'` y, si faltan, usa:
+
+- `inspect(sessionId, signal)` → `{ meta, inheritedEventCount, events }` en lugar de `events()`;
+- la fila de `list({})` → `{ running, agentAvailable, … }` como señal viva en lugar de `state()`;
+- sondeo con `settle()` en lugar de `wait()`.
+
+La tarea se cierra con la evidencia durable (`turn/end` + último `assistant/message`) y la fila de
+`list()` decide si la sesión sigue viva. El contrato HTTP y las tools MCP no cambian: es una
+adaptación interna del plugin Host.
+
 Comportamiento:
 - Crear servidor HTTP en `apply` con `http.createServer`, `server.listen(port, host)`, y
   registrarlo con `ctx.effect(() => { …; return () => server.close() })` (el disposer también
