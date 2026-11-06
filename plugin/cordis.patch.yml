@@ -1,0 +1,5 @@
+- insert:
+    - id: claude-bridge
+      name: '@local/dsh-claude-bridge'
+      config:
+        port: 49777

@@ -1,0 +1,22 @@
+# Node
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+
+# Sistema / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Estado local del puente (tokens, eventos, cursors) — nunca debe llegar al repo
+.dsh/
+claude-bridge/
+token
+state.json
+events.jsonl
+cursor.json
+
+# Configs locales de prueba
+tests/claude-mcp.local.json
+*.log

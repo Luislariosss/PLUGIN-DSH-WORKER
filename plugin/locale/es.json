@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Puente Claude Code",
+    "description": "Deja que Claude Code delegue trabajo a DeepSeek Harness: crea sesiones reales de DSH por un puente local autenticado y devuelve su resultado final."
+  }
+}

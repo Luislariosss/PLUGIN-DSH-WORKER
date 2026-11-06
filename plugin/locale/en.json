@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Claude Code bridge",
+    "description": "Lets Claude Code delegate work to DeepSeek Harness: creates real DSH sessions over a local authenticated bridge and returns their final result."
+  }
+}

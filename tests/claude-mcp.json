@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "dsh-bridge": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["C:\\Users\\luisl\\Downloads\\SQL\\dsh-claude-bridge\\mcp\\server.mjs"],
+      "env": {}
+    }
+  }
+}

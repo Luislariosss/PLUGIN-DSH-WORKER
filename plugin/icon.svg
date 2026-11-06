@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Puente Claude Code ⇄ DeepSeek Harness">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#101828"/>
+  <path d="M10 46 V34 a22 22 0 0 1 44 0 V46" fill="none" stroke="#4F7CFF" stroke-width="5" stroke-linecap="round"/>
+  <rect x="8" y="44" width="9" height="12" rx="2" fill="#8FB0FF"/>
+  <rect x="47" y="44" width="9" height="12" rx="2" fill="#8FB0FF"/>
+  <path d="M24 38 H40 M24 38 l5 -5 M24 38 l5 5" fill="none" stroke="#E8EEFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M40 30 H24 M40 30 l-5 -5 M40 30 l-5 5" fill="none" stroke="#6FE3B0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
