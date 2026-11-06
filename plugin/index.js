@@ -108,17 +108,43 @@ function lastAssistantText(ctx, sessionId) {
 
 /** Lee la cola durable de la sesión (cold-safe) vía sessionController.events. */
 async function readTail(ctx, sessionId) {
+  // Builds con sessionController.events() (contrato original).
+  if (typeof ctx.sessionController.events === 'function') {
+    try {
+      const page = await ctx.sessionController.events(
+        { address: { kind: 'session', sessionId }, maxMessages: 60 },
+        new AbortController().signal,
+      )
+      const records = Array.isArray(page?.records) ? page.records : []
+      return records
+        .filter((record) => record && record.type === 'event' && record.event)
+        .map((record) => record.event)
+    } catch (error) {
+      log('events() falló para', sessionId, error)
+    }
+  }
+  // DSH 0.2.x: inspect(sessionId, signal) → { meta, inheritedEventCount, events }.
+  if (typeof ctx.sessionController.inspect === 'function') {
+    try {
+      const view = await ctx.sessionController.inspect(sessionId, new AbortController().signal)
+      const events = Array.isArray(view?.events) ? view.events : []
+      return events.slice(-60)
+    } catch (error) {
+      log('inspect() falló para', sessionId, error)
+    }
+  }
+  return null
+}
+
+/** Fila viva de la sesión según sessionController.list() (compat DSH 0.2.x). */
+async function liveRowOf(ctx, sessionId) {
+  if (typeof ctx.sessionController.list !== 'function') return null
   try {
-    const page = await ctx.sessionController.events(
-      { address: { kind: 'session', sessionId }, maxMessages: 60 },
-      new AbortController().signal,
-    )
-    const records = Array.isArray(page?.records) ? page.records : []
-    return records
-      .filter((record) => record && record.type === 'event' && record.event)
-      .map((record) => record.event)
+    const page = await ctx.sessionController.list({}, new AbortController().signal)
+    const items = Array.isArray(page?.items) ? page.items : []
+    return items.find((row) => row && row.sessionId === sessionId) ?? null
   } catch (error) {
-    log('events() falló para', sessionId, error)
+    log('list() falló:', error)
     return null
   }
 }
@@ -383,9 +409,23 @@ function createBridge(ctx, settings) {
     }
 
     if (state === null) {
-      // La sesión desapareció (archivada/cerrada): no dejar la tarea colgada para siempre.
-      if (now() - task.createdAt > 60000) {
-        return finalize(task, 'error', null, 'La sesión de DSH ya no está viva')
+      // Builds sin sessionController.state(): la fila de list() da la señal viva.
+      const row = await liveRowOf(ctx, task.sessionId)
+      if (row === null) {
+        if (now() - task.createdAt > 60000) {
+          return finalize(task, 'error', null, 'La sesión de DSH ya no está viva')
+        }
+        return task
+      }
+      if (row.running === true || row.agentAvailable === true) {
+        if (task.status === 'waiting-input') task.status = 'running'
+        task.seenLive = true
+        touch(task)
+        return task
+      }
+      if (task.seenLive === true) {
+        const liveText = lastAssistantText(ctx, task.sessionId)
+        if (liveText !== null) return finalize(task, 'done', liveText)
       }
       return task
     }
@@ -502,6 +542,7 @@ function createBridge(ctx, settings) {
       updatedAt: now(),
       completedAt: undefined,
       turns: 1,
+      seenLive: false,
       result: undefined,
       error: undefined,
       waitingNotified: false,
@@ -536,6 +577,14 @@ function createBridge(ctx, settings) {
     while (!FINAL_STATUSES.has(task.status) && now() < deadline) {
       const remaining = Math.max(1500, Math.min(timeoutMs, deadline - now()))
       let result
+      if (typeof ctx.sessionController.wait !== 'function') {
+        // DSH 0.2.x no expone wait(): sondeamos la cola durable y la fila viva.
+        const nap = Math.max(250, Math.min(1000, deadline - now()))
+        await new Promise((resolve) => setTimeout(resolve, nap))
+        await settle(task)
+        if (!FINAL_STATUSES.has(task.status) && now() >= deadline) break
+        continue
+      }
       try {
         result = await ctx.sessionController.wait({
           sessionId: task.sessionId,
@@ -717,9 +766,27 @@ function createBridge(ctx, settings) {
       const live = ctx.sessions.get(sessionId)
       const state = await stateOf(sessionId)
       const tail = await readTail(ctx, sessionId)
+      let stateError = null
+      if (state === null && typeof ctx.sessionController.state === 'function') {
+        try {
+          await ctx.sessionController.state({ sessionId }, new AbortController().signal)
+        } catch (error) {
+          stateError = error instanceof Error ? error.message : String(error)
+        }
+      }
+      const api = {}
+      for (const name of [
+        'create', 'prompt', 'wait', 'state', 'events', 'inspect', 'list', 'page', 'follow',
+        'projections', 'liveProjections', 'cancel', 'updateQueue', 'attachment', 'fork', 'rename',
+      ]) {
+        api[name] = typeof ctx.sessionController?.[name]
+      }
       sendJson(res, 200, {
         live: Boolean(live),
+        api,
+        stateError,
         state,
+        row: await liveRowOf(ctx, sessionId),
         tailTypes: (tail ?? []).map((event) => ({
           type: event.type,
           turn: event.data?.turn,
