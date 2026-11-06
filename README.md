@@ -25,17 +25,18 @@ Sesión real de DSH en su GUI  →  su Lead puede usar Agent Teams (workers)
 
 | Tool MCP | Qué hace |
 |---|---|
-| `dsh_delegate` | Manda una tarea a DSH y espera el resultado final (texto autosuficiente). La sesión es real, se ve en el GUI de DSH y su Lead puede usar `spawn_teammate` / `team_task_*`. |
+| `dsh_delegate` | Manda una tarea a DSH y espera el resultado final (texto autosuficiente). `wait_seconds` por defecto 600 s (máx. 3600; `0` = no esperar). La sesión es real, se ve en el GUI de DSH y su Lead puede usar `spawn_teammate` / `team_task_*`. |
 | `dsh_followup` | Sigue el mismo hilo de DSH con otra instrucción. |
 | `dsh_result` / `dsh_status` / `dsh_list` | Recogen y consultan el estado del trabajo delegado. |
 | `dsh_cancel` | Cancela una tarea que sigue corriendo. |
-| `dsh_inbox` | Lista los avisos de tareas terminadas. |
+| `dsh_inbox` | Lista los avisos de finalización pendientes (`done`, `error`, `waiting-input`, `cancelled`) y los marca como leídos (salvo `ack: false`). |
 
 Y el **aviso de terminado**: cuando DSH acaba, el resultado vuelve en la propia llamada
-`dsh_delegate`; si el trabajo se dejó en segundo plano, un hook de Claude Code
-(`UserPromptSubmit`, marcado con `--dsh-bridge-hook`) inyecta el aviso "DSH terminó X" en tu
-siguiente mensaje. `additionalContext` solo es válido en ese evento, así que no se instala en
-`Stop`; si te queda uno viejo, el instalador lo quita y `notify.mjs` lo ignora.
+`dsh_delegate` si esperaste. Si el trabajo se dejó en segundo plano, los avisos llegan en tu
+**siguiente mensaje** mediante el único hook que se instala, `UserPromptSubmit` (el comando lleva el
+marcador `--dsh-bridge-hook`), o puedes leerlos con `dsh_inbox`. `additionalContext` solo es válido
+en ese evento, así que no se instala en `Stop`; si te queda un hook de `Stop` de una versión
+anterior, el instalador lo quita y `notify.mjs` lo ignora.
 
 ## Instalación
 
@@ -48,10 +49,12 @@ gestor de plugins del Host:
 plugin_manager install_bundle  target: <ruta-absoluta>/plugin
 ```
 
-Al activarse escribe `%USERPROFILE%\.dsh\claude-bridge\{token,state.json}` y escucha en
+Al activarse escribe en `%USERPROFILE%\.dsh\claude-bridge` (o en `bridgeDir`, ver
+[Configuración](#configuración-del-plugin)) los archivos `token`, `state.json`, `events.jsonl` y
+`tasks.json` (ver [Estado y persistencia](#estado-y-persistencia)). Escucha en
 `http://127.0.0.1:49777` (loopback, con token; si el puerto está ocupado prueba 49778…49786).
 
-### 2. MCP + hooks en Claude Code
+### 2. MCP + hook + permisos en Claude Code
 
 Con DSH abierto (para que el plugin responda):
 
@@ -59,24 +62,28 @@ Con DSH abierto (para que el plugin responda):
 powershell -NoProfile -ExecutionPolicy Bypass -File "<repo>\scripts\install-claude.ps1"
 ```
 
-Con backups `.bak-<timestamp>`:
+El instalador:
 
-- registra el MCP `dsh-bridge` a nivel usuario (`claude mcp add --transport stdio …`);
-- añade el hook `UserPromptSubmit` (con marcador `--dsh-bridge-hook`) y los permisos **por
-  herramienta** `mcp__dsh-bridge__dsh_delegate`, `…__dsh_list`, `…__dsh_status`, `…__dsh_result`,
-  `…__dsh_followup`, `…__dsh_cancel`, `…__dsh_inbox` en `~/.claude/settings.json` (merge en Node,
-  sin romper otros hooks ni escribir BOM; reinstalar es idempotente, quita hooks duplicados o
-  viejos de `Stop`, y migra la regla antigua `mcp__dsh-bridge` que autorizaba todo el MCP);
+- registra el MCP `dsh-bridge` a nivel usuario (`claude mcp add --scope user --transport stdio …`);
+- añade el hook `UserPromptSubmit` (con marcador `--dsh-bridge-hook`) en `~/.claude/settings.json`
+  y **7 reglas por herramienta**: `mcp__dsh-bridge__dsh_delegate`, `mcp__dsh-bridge__dsh_list`,
+  `mcp__dsh-bridge__dsh_status`, `mcp__dsh-bridge__dsh_result`, `mcp__dsh-bridge__dsh_followup`,
+  `mcp__dsh-bridge__dsh_cancel` y `mcp__dsh-bridge__dsh_inbox`. No autoriza el servidor MCP entero.
+  El merge se hace en Node (conserva otros hooks y no escribe BOM). Reinstalar es idempotente: quita
+  hooks propios duplicados o viejos de `Stop` y migra la regla antigua `mcp__dsh-bridge`, que
+  autorizaba todo el MCP;
 - añade el bloque gestionado `<!-- dsh-bridge:start -->…<!-- dsh-bridge:end -->` en
   `~/.claude/CLAUDE.md` para que Claude sepa cuándo delegar.
+
+`settings.json` y `CLAUDE.md` se respaldan como `.bak-<timestamp>` antes de tocarlos.
 
 ### 3. Verificar
 
 ```powershell
 claude mcp list                       # dsh-bridge debe salir Connected
 node "<repo>\mcp\selftest.mjs"        # tools/list sin necesitar DSH
-node "<repo>\tests\e2e.mjs"           # HTTP del plugin contra DSH
-node "<repo>\tests\mcp-e2e.mjs"       # MCP completo contra DSH
+node "<repo>\tests\e2e.mjs"           # HTTP del plugin contra DSH (requiere DSH abierto)
+node "<repo>\tests\mcp-e2e.mjs"       # MCP completo contra DSH (requiere DSH abierto)
 ```
 
 Sin Claude Code de por medio, el puente se comprueba solo con HTTP:
@@ -94,6 +101,16 @@ Invoke-RestMethod "http://$($s.host):$($s.port)/v1/health" -Headers @{ Authoriza
 > Nota: si lanzas `claude mcp list` **dentro** del sandbox de DSH, los servidores MCP stdio pueden
 > salir como `Failed to connect — EPERM`; es el sandbox bloqueando la creación de pipes para
 > procesos hijos, no el puente. Fuera de él salen `Connected`.
+
+### 4. Desinstalar
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "<repo>\scripts\uninstall-claude.ps1"
+```
+
+Quita el MCP `dsh-bridge`, el hook, las reglas `mcp__dsh-bridge__dsh_*` (y la regla antigua
+`mcp__dsh-bridge`) y el bloque de `CLAUDE.md`, con backups `.bak-<timestamp>`. No toca el plugin de
+DSH: quítalo desde **Plugins** en DSH. Tampoco borra la carpeta `%USERPROFILE%\.dsh\claude-bridge`.
 
 ## Compatibilidad con versiones de DSH
 
@@ -135,47 +152,81 @@ Claude llama a `dsh_delegate`; la tarea aparece en DSH como una sesión nueva, s
 usa Agent Teams, y al terminar devuelve un resumen que Claude continúa usando.
 
 Para trabajo largo en segundo plano: `dsh_delegate` con `wait_seconds: 0` devuelve el `task_id`;
-luego Claude puede consultar `dsh_result` / `dsh_status`, o dejar que el aviso llegue por hooks.
+luego Claude puede consultar `dsh_result` / `dsh_status`, leer `dsh_inbox`, o recibir el aviso en
+tu siguiente mensaje.
 
 ## Configuración del plugin
 
-En `~/.dsh/profiles/desktop/cordis.patch.yml` (o en la fila del plugin):
+En `~/.dsh/profiles/desktop/cordis.patch.yml` (o en la fila del plugin). Los valores por defecto
+son los de `readSettings` en `plugin/index.js`; un valor no válido se sustituye por su default.
 
 ```yaml
 - id: claude-bridge
   name: '@local/dsh-claude-bridge'
   config:
-    port: 49777                 # puerto base
-    host: 127.0.0.1             # solo loopback; no lo cambies a 0.0.0.0
-    bridgeDir: 'C:\Users\<usuario>\.dsh\claude-bridge'
-    defaultCwd: null            # cwd si la petición no manda uno
-    agentPreset: null           # null = preset por defecto del perfil
-    permission: null            # null = no tocar; 'workspace-write' | 'danger-full-access'
-    allowFullAccess: false      # true = admitir permission 'danger-full-access' en las peticiones
-    maxConcurrent: 4
-    clientTimeZone: America/Mexico_City
-    maxTaskMs: 21600000         # 6 h
+    port: 49777                 # default 49777; si está ocupado prueba los 9 siguientes
+    host: 127.0.0.1             # default 127.0.0.1; solo loopback, no lo cambies a 0.0.0.0
+    bridgeDir: 'C:\Users\<usuario>\.dsh\claude-bridge'   # default %USERPROFILE%\.dsh\claude-bridge
+    defaultCwd: null            # default null: si la petición no manda cwd, el del proceso de DSH
+    agentPreset: null           # default null = preset por defecto del perfil
+    permission: null            # default null = no tocar; 'workspace-write' | 'danger-full-access'
+    allowFullAccess: false      # default false; true = admitir permission 'danger-full-access' en las peticiones
+    maxConcurrent: 4            # default 4; con esas tareas en curso, una nueva recibe 409
+    clientTimeZone: America/Mexico_City   # default America/Mexico_City
+    maxTaskMs: 21600000         # default 6 h; pasado ese tiempo la tarea se marca error
 ```
 
-El MCP lee `state.json`/`token` en cada llamada; si el plugin se reinicia en otro puerto se entera
-solo. Se puede forzar otra carpeta con `DSH_BRIDGE_DIR`.
+El MCP lee `state.json`/`token` de la carpeta del puente con una caché de 2 s y la vuelve a leer si
+falla la conexión; si el plugin se reinicia en otro puerto se entera solo. Se puede forzar otra
+carpeta con la variable de entorno `DSH_BRIDGE_DIR` (la leen el MCP y el hook).
+
+## Estado y persistencia
+
+- Las tareas se guardan en `<bridgeDir>\tasks.json` (escritura atómica, con un pequeño retardo) y
+  sobreviven a reinicios de DSH. Se guardan las **200 tareas más recientes**.
+- El archivo contiene **prompts y resultados** de las tareas (puede pesar varios MB), por eso está en
+  `.gitignore`. Lo mismo para `token`, `state.json`, `events.jsonl` y `cursor.json`.
+- Al arrancar, las tareas finales (`done`, `error`, `cancelled`) se restauran tal cual, así que
+  `dsh_result` sigue devolviendo su resultado. Las que estaban en curso se reevalúan; si su sesión de
+  DSH ya no existe, se cierran con error.
+- `events.jsonl` guarda un evento por aviso de finalización (solo se añade) y `cursor.json` el último
+  aviso ya leído.
 
 ## Seguridad
 
 - El plugin escucha **solo en 127.0.0.1** y exige `Authorization: Bearer <token>`; el token vive en
   `%USERPROFILE%\.dsh\claude-bridge\token` con permisos del usuario.
-- No expone puertos a la red ni ejecuta comandos arbitrarios desde el token: solo el MCP local
-  puede llamar, y solo crea sesiones/prompts (las tools de DSH siguen su propio sandbox y
-  aprobaciones).
+- No expone puertos a la red ni ejecuta comandos arbitrarios: solo crea sesiones de DSH, envía
+  prompts y seguimientos, consulta estado y cancela tareas (las tools de DSH siguen su propio sandbox
+  y aprobaciones).
 - Las sesiones delegadas usan el preset de permisos del perfil (`workspace-write` por defecto).
 - `permission: 'danger-full-access'` en una petición se rechaza con **403** (`permission/forbidden`)
   salvo que pongas `allowFullAccess: true` en la config del plugin. Es un ajuste explícito de Luis;
-  no lo actives por defecto.
-- El permiso de Claude Code se concede **por herramienta** (`mcp__dsh-bridge__dsh_*`), no a todo el
-  servidor MCP: una herramienta nueva que se añada al MCP pedirá confirmación.
+  no lo actives por defecto. Ojo: el `permission` de la config del plugin no pasa por esa
+  comprobación, así que no lo pongas en `danger-full-access`.
+- El permiso de Claude Code se concede **por herramienta** (las 7 reglas `mcp__dsh-bridge__dsh_*`
+  listadas en la instalación), no a todo el servidor MCP: una herramienta nueva que se añada al MCP
+  pedirá confirmación.
 - Si una sesión pide aprobación, se responde en el **GUI de DSH**; la tarea queda
   `waiting-input` y Claude Code lo ve.
 - **No delegues secretos ni credenciales** en el texto de la tarea.
+
+## Solución de problemas
+
+- **`state.json` no existe** (o el MCP dice que el plugin no está corriendo): el plugin no está
+  activo. Abre DeepSeek Harness o instala/activa el plugin.
+- **HTTP 401**: token desincronizado. Borra `token` y reinicia DSH; se regenera.
+- **HTTP 403 `permission/forbidden`**: se pidió `danger-full-access` sin `allowFullAccess: true`.
+- **HTTP 409 `tasks/too-many-running`**: ya hay `maxConcurrent` tareas en curso. Espera o cancela una.
+- **La tarea sigue `running` mucho rato**: consulta `/v1/_diag?sessionId=…` (ver arriba) para ver si
+  hay `turn/end`; revisa también el modelo por defecto del perfil de DSH. Tras `maxTaskMs` se marca
+  error.
+- **No llegan avisos**: se entregan en el siguiente mensaje o con `dsh_inbox`. Revisa
+  `events.jsonl` y `cursor.json` en la carpeta del puente.
+- **Regla de permiso antigua (`mcp__dsh-bridge` a secas)**: vuelve a ejecutar `install-claude.ps1`;
+  migra la regla a las 7 reglas por herramienta.
+- **Tests**: ejecútalos desde la raíz del repo con `node tests\…`. `selftest.mjs` no necesita DSH;
+  `e2e.mjs` y `mcp-e2e.mjs` sí.
 
 ## Estructura del repo
 
@@ -202,7 +253,8 @@ Contrato interno (endpoints, estados, eventos, tools MCP): [`docs/PROTOCOL.md`](
 ## Límites conocidos
 
 - Claude Code **no acepta mensajes entrantes** en una sesión interactiva: el aviso se entrega como
-  resultado del tool o como `additionalContext` de los hooks, nunca despertando una sesión idle.
+  resultado de una tool o como `additionalContext` del hook `UserPromptSubmit` (en el siguiente
+  mensaje), nunca despertando una sesión idle.
 - Si DSH está cerrado, el MCP devuelve un error claro.
 - Cada tarea deja una sesión visible en el GUI de DSH (se puede archivar ahí).
 - Win-11 únicamente en esta versión (rutas y scripts PowerShell).
