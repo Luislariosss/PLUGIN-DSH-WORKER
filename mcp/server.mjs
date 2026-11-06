@@ -160,7 +160,14 @@ const TOOLS = [
         task: { type: 'string', description: 'Tarea completa y autosuficiente para DSH (contexto, criterio de terminado, qué devolver).' },
         cwd: { type: 'string', description: 'Carpeta absoluta donde trabajará DSH. Por defecto la del puente o el cwd de Claude.' },
         preset: { type: 'string', description: 'Agent preset de DSH (opcional; normalmente se omite).' },
-        permission: { type: 'string', enum: ['workspace-write', 'danger-full-access'], description: 'Preset de permisos de la sesión de DSH (opcional).' },
+        permission: {
+          type: 'string',
+          enum: ['workspace-write', 'danger-full-access'],
+          description:
+            'Preset de permisos de la sesión de DSH (opcional). danger-full-access requiere habilitarlo en el plugin ' +
+            '(allowFullAccess: true en la config de claude-bridge); si no, DSH responde 403 (permission/forbidden). ' +
+            'Déjalo omitido salvo que Luis lo pida explícitamente.',
+        },
         workers: { type: 'boolean', description: 'true (default) = indica a DSH que puede usar Agent Teams; false = que resuelva solo.' },
         wait_seconds: { type: 'number', description: 'Cuánto esperar el resultado antes de devolver el task_id (default 600, máx 3600; 0 = no esperar).' },
       },

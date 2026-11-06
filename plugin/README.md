@@ -41,6 +41,7 @@ En `~/.dsh/profiles/desktop/cordis.patch.yml` (o en la fila del plugin en la pá
     defaultCwd: null            # cwd si la petición no manda uno
     agentPreset: null           # null = preset por defecto del perfil
     permission: null            # null = no tocar; 'workspace-write' | 'danger-full-access'
+    allowFullAccess: false      # true = admitir permission 'danger-full-access' (si no, 403)
     maxConcurrent: 4            # tareas simultáneas antes de devolver 409
     clientTimeZone: America/Mexico_City
     maxTaskMs: 21600000         # 6 h: tras eso la tarea se marca error

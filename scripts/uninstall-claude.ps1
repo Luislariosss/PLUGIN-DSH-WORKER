@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     - Quita el MCP `dsh-bridge` (scope user).
-    - Quita los hooks de aviso y el permiso mcp__dsh-bridge de ~/.claude/settings.json.
+    - Quita los hooks de aviso y los permisos mcp__dsh-bridge__dsh_* (y la regla antigua
+      mcp__dsh-bridge) de ~/.claude/settings.json.
     - Quita el bloque gestionado del CLAUDE.md.
     Hace backups .bak-<timestamp>. No toca el plugin de DSH (quítalo desde la página Plugins).
 #>

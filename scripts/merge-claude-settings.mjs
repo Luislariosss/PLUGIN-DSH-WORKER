@@ -23,7 +23,11 @@ const HOOK_MARKER = '--dsh-bridge-hook'
 const INSTALL_EVENTS = ['UserPromptSubmit']
 const CLEAN_EVENTS = ['UserPromptSubmit', 'Stop'] // Stop: hooks de versiones anteriores
 const hookCommand = mode === 'install' ? `node "${notifyPath}" ${HOOK_MARKER}` : null
-const allowRule = 'mcp__dsh-bridge'
+// Reglas por herramienta (nunca el servidor entero: danger-full-access no debe quedar autorizado).
+const TOOL_NAMES = ['dsh_delegate', 'dsh_list', 'dsh_status', 'dsh_result', 'dsh_followup', 'dsh_cancel', 'dsh_inbox']
+const ALLOW_RULES = TOOL_NAMES.map((tool) => `mcp__dsh-bridge__${tool}`)
+// Regla antigua que autorizaba todo el MCP: se quita al instalar (migración) y al desinstalar.
+const LEGACY_ALLOW_RULE = 'mcp__dsh-bridge'
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -89,11 +93,17 @@ async function main() {
       settings.hooks[eventName] = groups
     }
     if (!isPlainObject(settings.permissions)) settings.permissions = {}
-    const allow = Array.isArray(settings.permissions.allow) ? settings.permissions.allow : []
-    if (!allow.includes(allowRule)) allow.push(allowRule)
+    const current = Array.isArray(settings.permissions.allow) ? settings.permissions.allow : []
+    const allow = current.filter((rule) => rule !== LEGACY_ALLOW_RULE)
+    for (const rule of ALLOW_RULES) {
+      if (!allow.includes(rule)) allow.push(rule)
+    }
     settings.permissions.allow = allow
   } else if (Array.isArray(settings.permissions?.allow)) {
-    settings.permissions.allow = settings.permissions.allow.filter((rule) => rule !== allowRule)
+    const removed = new Set([LEGACY_ALLOW_RULE, ...ALLOW_RULES])
+    settings.permissions.allow = settings.permissions.allow.filter((rule) => !removed.has(rule))
+    if (settings.permissions.allow.length === 0) delete settings.permissions.allow
+    if (Object.keys(settings.permissions).length === 0) delete settings.permissions
   }
 
   if (Object.keys(settings.hooks).length === 0) delete settings.hooks
@@ -101,7 +111,15 @@ async function main() {
   const json = JSON.stringify(settings, null, 2) + '\n'
   await writeFile(settingsPath, Buffer.from(json, 'utf8'))
   console.log(
-    JSON.stringify({ ok: true, mode, settingsPath, hookCommand, events: INSTALL_EVENTS, allowRule }),
+    JSON.stringify({
+      ok: true,
+      mode,
+      settingsPath,
+      hookCommand,
+      events: INSTALL_EVENTS,
+      allowRules: mode === 'install' ? ALLOW_RULES : [],
+      removedLegacyRule: LEGACY_ALLOW_RULE,
+    }),
   )
 }
 

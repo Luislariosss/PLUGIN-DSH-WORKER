@@ -62,9 +62,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<repo>\scripts\install-clau
 Con backups `.bak-<timestamp>`:
 
 - registra el MCP `dsh-bridge` a nivel usuario (`claude mcp add --transport stdio …`);
-- añade el hook `UserPromptSubmit` (con marcador `--dsh-bridge-hook`) y el permiso
-  `mcp__dsh-bridge` en `~/.claude/settings.json` (merge en Node, sin romper otros hooks ni
-  escribir BOM; reinstalar es idempotente y quita hooks duplicados o viejos de `Stop`);
+- añade el hook `UserPromptSubmit` (con marcador `--dsh-bridge-hook`) y los permisos **por
+  herramienta** `mcp__dsh-bridge__dsh_delegate`, `…__dsh_list`, `…__dsh_status`, `…__dsh_result`,
+  `…__dsh_followup`, `…__dsh_cancel`, `…__dsh_inbox` en `~/.claude/settings.json` (merge en Node,
+  sin romper otros hooks ni escribir BOM; reinstalar es idempotente, quita hooks duplicados o
+  viejos de `Stop`, y migra la regla antigua `mcp__dsh-bridge` que autorizaba todo el MCP);
 - añade el bloque gestionado `<!-- dsh-bridge:start -->…<!-- dsh-bridge:end -->` en
   `~/.claude/CLAUDE.md` para que Claude sepa cuándo delegar.
 
@@ -149,6 +151,7 @@ En `~/.dsh/profiles/desktop/cordis.patch.yml` (o en la fila del plugin):
     defaultCwd: null            # cwd si la petición no manda uno
     agentPreset: null           # null = preset por defecto del perfil
     permission: null            # null = no tocar; 'workspace-write' | 'danger-full-access'
+    allowFullAccess: false      # true = admitir permission 'danger-full-access' en las peticiones
     maxConcurrent: 4
     clientTimeZone: America/Mexico_City
     maxTaskMs: 21600000         # 6 h
@@ -165,6 +168,11 @@ solo. Se puede forzar otra carpeta con `DSH_BRIDGE_DIR`.
   puede llamar, y solo crea sesiones/prompts (las tools de DSH siguen su propio sandbox y
   aprobaciones).
 - Las sesiones delegadas usan el preset de permisos del perfil (`workspace-write` por defecto).
+- `permission: 'danger-full-access'` en una petición se rechaza con **403** (`permission/forbidden`)
+  salvo que pongas `allowFullAccess: true` en la config del plugin. Es un ajuste explícito de Luis;
+  no lo actives por defecto.
+- El permiso de Claude Code se concede **por herramienta** (`mcp__dsh-bridge__dsh_*`), no a todo el
+  servidor MCP: una herramienta nueva que se añada al MCP pedirá confirmación.
 - Si una sesión pide aprobación, se responde en el **GUI de DSH**; la tarea queda
   `waiting-input` y Claude Code lo ve.
 - **No delegues secretos ni credenciales** en el texto de la tarea.

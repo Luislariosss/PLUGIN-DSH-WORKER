@@ -49,6 +49,8 @@ function readSettings(config) {
     defaultCwd: typeof c.defaultCwd === 'string' && c.defaultCwd.length > 0 ? c.defaultCwd : null,
     agentPreset: typeof c.agentPreset === 'string' && c.agentPreset.length > 0 ? c.agentPreset : null,
     permission: typeof c.permission === 'string' && c.permission.length > 0 ? c.permission : null,
+    // Permite que las peticiones pidan permission 'danger-full-access'. Desactivado por defecto.
+    allowFullAccess: c.allowFullAccess === true,
     maxConcurrent: Number.isInteger(c.maxConcurrent) && c.maxConcurrent > 0 ? c.maxConcurrent : 4,
     clientTimeZone:
       typeof c.clientTimeZone === 'string' && c.clientTimeZone.length > 0
@@ -605,6 +607,13 @@ function createBridge(ctx, settings) {
     if (prompt.length === 0) throw new BridgeHttpError(400, 'prompt/missing', 'Falta prompt')
     if (prompt.length > PROMPT_MAX) {
       throw new BridgeHttpError(400, 'prompt/too-long', `prompt mayor a ${PROMPT_MAX} caracteres`)
+    }
+    if (body.permission === 'danger-full-access' && !settings.allowFullAccess) {
+      throw new BridgeHttpError(
+        403,
+        'permission/forbidden',
+        'danger-full-access requiere habilitarlo en el plugin: allowFullAccess: true en la config de claude-bridge',
+      )
     }
     if (runningCount() >= settings.maxConcurrent) {
       throw new BridgeHttpError(

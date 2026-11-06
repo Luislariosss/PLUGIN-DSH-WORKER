@@ -6,7 +6,8 @@
     - Registra el servidor MCP `dsh-bridge` a nivel usuario (scope user).
     - Añade el hook UserPromptSubmit (marcador `--dsh-bridge-hook`) para que los avisos de
       "DSH terminó" lleguen a Claude; quita hooks propios duplicados y los viejos de Stop.
-    - Añade el permiso mcp__dsh-bridge para no preguntar en cada llamada.
+    - Añade permisos por herramienta (mcp__dsh-bridge__dsh_*) para no preguntar en cada llamada;
+      no autoriza el MCP completo, así que danger-full-access no queda pre-aprobado.
     - Añade un bloque gestionado en ~/.claude/CLAUDE.md explicando cuándo delegar.
     Hace backups .bak-<timestamp>. No instala el plugin de DSH: eso se hace desde la página
     Plugins de DSH (o con el gestor de plugins del Host).
@@ -93,7 +94,7 @@ Write-Ok 'MCP dsh-bridge registrado'
 & claude mcp get dsh-bridge 2>&1 | Out-Host
 
 if (-not $SkipHooks) {
-    Write-Step 'Instalando el hook de aviso (UserPromptSubmit) y permiso mcp__dsh-bridge'
+    Write-Step 'Instalando el hook de aviso (UserPromptSubmit) y permisos mcp__dsh-bridge__dsh_*'
     & $nodePath $mergeSettings install $notifyPath
     if ($LASTEXITCODE -ne 0) { throw "merge-claude-settings.mjs falló con código $LASTEXITCODE" }
     Write-Ok 'settings.json actualizado (con backup)'

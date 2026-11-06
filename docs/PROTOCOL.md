@@ -103,6 +103,9 @@ Reglas:
   proceso Host. Debe ser ruta absoluta existente; si no existe → 400.
 - `permission` opcional: `workspace-write` o `danger-full-access`. Omitido (y sin config) = no
   tocar el preset del perfil, que ya arranca en `workspace-write`.
+- `permission: 'danger-full-access'` en el body → **403** `permission/forbidden` salvo que el
+  plugin tenga `allowFullAccess: true` en su config (default `false`). Se valida antes de crear la
+  sesión. La config del plugin (`permission`) no se valida con este check.
 - `preset` opcional: id de agent preset de DSH; omitido = preset por defecto del perfil.
 - `workers` default `true`: el prompt enviado a DSH incluye la instrucción de usar Agent Teams.
 - `turns` empieza en 1 al crear la tarea y sube con cada follow-up. La tarea se cierra cuando la
@@ -162,6 +165,7 @@ bridgeDir: '%USERPROFILE%\.dsh\claude-bridge'
 defaultCwd: null
 agentPreset: null
 permission: null            // null = no tocar; si no, 'workspace-write' | 'danger-full-access'
+allowFullAccess: false      // true = admitir permission 'danger-full-access' en POST /v1/tasks
 maxConcurrent: 4
 clientTimeZone: 'America/Mexico_City'
 ```
@@ -281,7 +285,11 @@ Reglas:
    `claude mcp add --scope user --transport stdio dsh-bridge -- <node> <abs>\mcp\server.mjs`.
    (`add-json` falla con el paso de argumentos de PowerShell en esta versión de Claude Code.)
 3. Ejecuta `node scripts/merge-claude-settings.mjs install <abs>\mcp\notify.mjs`: fusiona en
-   `~/.claude/settings.json` el hook `UserPromptSubmit` y el permiso `mcp__dsh-bridge` (backup
+   `~/.claude/settings.json` el hook `UserPromptSubmit` y los permisos **por herramienta**
+   `mcp__dsh-bridge__dsh_delegate`, `…__dsh_list`, `…__dsh_status`, `…__dsh_result`,
+   `…__dsh_followup`, `…__dsh_cancel`, `…__dsh_inbox` (nunca `mcp__dsh-bridge` completo: la regla
+   antigua se quita al instalar y al desinstalar; así una herramienta nueva del MCP vuelve a pedir
+   confirmación) (backup
    `.bak-<timestamp>`, preservando la forma de array y sin BOM). Es idempotente: primero quita los
    handlers propios —reconocidos por el marcador `--dsh-bridge-hook` o por una instalación previa
    con `notify.mjs`— y también los viejos de `Stop`, y luego deja uno solo con la ruta actual.
