@@ -1,10 +1,11 @@
-﻿<#
+<#
 .SYNOPSIS
     Instala el puente Claude Code <-> DeepSeek Harness en Claude Code (MCP + hooks + CLAUDE.md).
 
 .DESCRIPTION
     - Registra el servidor MCP `dsh-bridge` a nivel usuario (scope user).
-    - Añade hooks UserPromptSubmit y Stop para que los avisos de "DSH terminó" lleguen a Claude.
+    - Añade el hook UserPromptSubmit (marcador `--dsh-bridge-hook`) para que los avisos de
+      "DSH terminó" lleguen a Claude; quita hooks propios duplicados y los viejos de Stop.
     - Añade el permiso mcp__dsh-bridge para no preguntar en cada llamada.
     - Añade un bloque gestionado en ~/.claude/CLAUDE.md explicando cuándo delegar.
     Hace backups .bak-<timestamp>. No instala el plugin de DSH: eso se hace desde la página
@@ -92,7 +93,7 @@ Write-Ok 'MCP dsh-bridge registrado'
 & claude mcp get dsh-bridge 2>&1 | Out-Host
 
 if (-not $SkipHooks) {
-    Write-Step 'Instalando hooks de aviso (UserPromptSubmit y Stop) y permiso mcp__dsh-bridge'
+    Write-Step 'Instalando el hook de aviso (UserPromptSubmit) y permiso mcp__dsh-bridge'
     & $nodePath $mergeSettings install $notifyPath
     if ($LASTEXITCODE -ne 0) { throw "merge-claude-settings.mjs falló con código $LASTEXITCODE" }
     Write-Ok 'settings.json actualizado (con backup)'

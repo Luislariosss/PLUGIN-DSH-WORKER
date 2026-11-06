@@ -15,9 +15,12 @@ Hace, con backups `.bak-<timestamp>`:
 
 1. `claude mcp remove --scope user dsh-bridge` (best-effort) y
    `claude mcp add --scope user --transport stdio dsh-bridge -- <node> <mcp/server.mjs>`.
-2. `node scripts/merge-claude-settings.mjs install <mcp/notify.mjs>`: añade los hooks
-   `UserPromptSubmit` y `Stop` y el permiso `mcp__dsh-bridge` a `~/.claude/settings.json`,
-   conservando todo lo demás (no rompe arrays de un solo elemento; no escribe BOM).
+2. `node scripts/merge-claude-settings.mjs install <mcp/notify.mjs>`: añade el hook
+   `UserPromptSubmit` (marcado con `--dsh-bridge-hook`) y el permiso `mcp__dsh-bridge` a
+   `~/.claude/settings.json`, conservando todo lo demás (no rompe arrays de un solo elemento;
+   no escribe BOM). El instalador solo registra el hook `UserPromptSubmit`; los avisos llegan
+   en tu siguiente mensaje (o con `dsh_inbox`). Reinstalar es idempotente: quita los hooks
+   propios (también los viejos de `Stop`) y deja uno solo, con la ruta actual.
 3. Añade/actualiza el bloque `<!-- dsh-bridge:start --> … <!-- dsh-bridge:end -->` en
    `~/.claude/CLAUDE.md` con las instrucciones para delegar.
 

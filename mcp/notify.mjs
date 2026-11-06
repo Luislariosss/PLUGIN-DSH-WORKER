@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * Hook de Claude Code (UserPromptSubmit y Stop) para avisar a Claude de que DSH terminó trabajo.
+ * Hook de Claude Code (UserPromptSubmit) para avisar a Claude de que DSH terminó trabajo.
  *
  * Lee el JSON del hook por stdin, busca eventos no ackeados de %USERPROFILE%\.dsh\claude-bridge\
  * events.jsonl, imprime UNA línea JSON con additionalContext y marca los avisos como leídos.
- * Sin eventos nuevos no imprime nada. Siempre exit 0: un aviso perdido no es crítico.
+ * Sin eventos nuevos no imprime nada. En cualquier otro evento (Stop de instalaciones viejas)
+ * sale sin imprimir y sin tocar el cursor: additionalContext solo es válido en UserPromptSubmit.
+ * Siempre exit 0: un aviso perdido no es crítico.
  */
 import { readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -33,7 +35,8 @@ async function readCursor() {
 
 async function writeCursor(seq) {
   try {
-    await writeFile(CURSOR_PATH, JSON.stringify({ ackedSeq: seq }), 'utf8')
+    const current = await readCursor()
+    await writeFile(CURSOR_PATH, JSON.stringify({ ackedSeq: Math.max(current, seq) }), 'utf8')
   } catch {
     // sin cursor no pasa nada: el aviso se repetirá
   }
@@ -58,6 +61,11 @@ async function main() {
   } catch {
     // stdin no era JSON: seguimos como UserPromptSubmit
   }
+
+  // additionalContext solo es válido en UserPromptSubmit. En Stop (hook de una
+  // instalación vieja) no entregamos ni marcamos como leído: el aviso saldrá en
+  // el siguiente prompt.
+  if (hookName !== 'UserPromptSubmit') process.exit(0)
 
   const since = await readCursor()
   let lines = []

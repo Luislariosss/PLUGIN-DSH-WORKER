@@ -32,8 +32,10 @@ Sesión real de DSH en su GUI  →  su Lead puede usar Agent Teams (workers)
 | `dsh_inbox` | Lista los avisos de tareas terminadas. |
 
 Y el **aviso de terminado**: cuando DSH acaba, el resultado vuelve en la propia llamada
-`dsh_delegate`; si el trabajo se dejó en segundo plano, dos hooks de Claude Code
-(`UserPromptSubmit` y `Stop`) inyectan el aviso "DSH terminó X" en el siguiente turno.
+`dsh_delegate`; si el trabajo se dejó en segundo plano, un hook de Claude Code
+(`UserPromptSubmit`, marcado con `--dsh-bridge-hook`) inyecta el aviso "DSH terminó X" en tu
+siguiente mensaje. `additionalContext` solo es válido en ese evento, así que no se instala en
+`Stop`; si te queda uno viejo, el instalador lo quita y `notify.mjs` lo ignora.
 
 ## Instalación
 
@@ -60,8 +62,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<repo>\scripts\install-clau
 Con backups `.bak-<timestamp>`:
 
 - registra el MCP `dsh-bridge` a nivel usuario (`claude mcp add --transport stdio …`);
-- añade los hooks `UserPromptSubmit` y `Stop` y el permiso `mcp__dsh-bridge` en
-  `~/.claude/settings.json` (merge en Node, sin romper otros hooks ni escribir BOM);
+- añade el hook `UserPromptSubmit` (con marcador `--dsh-bridge-hook`) y el permiso
+  `mcp__dsh-bridge` en `~/.claude/settings.json` (merge en Node, sin romper otros hooks ni
+  escribir BOM; reinstalar es idempotente y quita hooks duplicados o viejos de `Stop`);
 - añade el bloque gestionado `<!-- dsh-bridge:start -->…<!-- dsh-bridge:end -->` en
   `~/.claude/CLAUDE.md` para que Claude sepa cuándo delegar.
 

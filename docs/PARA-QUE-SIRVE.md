@@ -56,8 +56,8 @@ manda trabajo.
 
 - Plugin `@local/dsh-claude-bridge` activo: `GET /v1/health` → `ok`, 8 tareas `done`, 0 errores.
 - MCP `dsh-bridge` en Claude Code: `Connected`.
-- Hooks `UserPromptSubmit` + `Stop` y permiso `mcp__dsh-bridge` instalados; bloque en
-  `~/.claude/CLAUDE.md`.
+- Hook `UserPromptSubmit` (marcador `--dsh-bridge-hook`) y permiso `mcp__dsh-bridge` instalados;
+  bloque en `~/.claude/CLAUDE.md`.
 - `tests/e2e.mjs` (HTTP: crear, resultado, evento, follow-up, 404) y `tests/mcp-e2e.mjs`
   (MCP completo) en verde.
 - Probado con Claude Code real: delegó tareas y recibió `CLAUDE_CLI_OK` / `INSTALADO_OK`.

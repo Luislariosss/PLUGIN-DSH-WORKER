@@ -19,8 +19,10 @@ if (mode === 'install' && (!notifyPath || !notifyPath.toLowerCase().endsWith('no
 }
 
 const settingsPath = process.env.DSH_CLAUDE_SETTINGS ?? path.join(os.homedir(), '.claude', 'settings.json')
-const hookCommand = mode === 'install' ? `node "${notifyPath}"` : null
-const PRESENT = new Set(['UserPromptSubmit', 'Stop'])
+const HOOK_MARKER = '--dsh-bridge-hook'
+const INSTALL_EVENTS = ['UserPromptSubmit']
+const CLEAN_EVENTS = ['UserPromptSubmit', 'Stop'] // Stop: hooks de versiones anteriores
+const hookCommand = mode === 'install' ? `node "${notifyPath}" ${HOOK_MARKER}` : null
 const allowRule = 'mcp__dsh-bridge'
 
 function isPlainObject(value) {
@@ -29,7 +31,24 @@ function isPlainObject(value) {
 
 function isOurHandler(handler) {
   const command = String(handler?.command ?? '')
-  return command.includes('dsh-claude-bridge') && command.includes('notify.mjs')
+  if (command.includes(HOOK_MARKER)) return true
+  // Instalaciones previas sin marcador
+  return (
+    command.includes('notify.mjs') &&
+    (command.includes('dsh-claude-bridge') || command.includes('PLUGIN-DSH-WORKER'))
+  )
+}
+
+/** Quita nuestros handlers de un evento y devuelve los grupos restantes. */
+function stripOurs(groups) {
+  const kept = []
+  for (const group of groups) {
+    const handlers = Array.isArray(group?.hooks) ? group.hooks : []
+    const filtered = handlers.filter((handler) => !isOurHandler(handler))
+    if (filtered.length === handlers.length) kept.push(group)
+    else if (filtered.length > 0) kept.push({ ...group, hooks: filtered })
+  }
+  return kept
 }
 
 async function readSettings() {
@@ -55,44 +74,34 @@ async function main() {
 
   if (!isPlainObject(settings.hooks)) settings.hooks = {}
 
+  // Limpieza común (también retira el hook viejo de Stop)
+  for (const eventName of CLEAN_EVENTS) {
+    const groups = Array.isArray(settings.hooks[eventName]) ? settings.hooks[eventName] : []
+    const kept = stripOurs(groups)
+    if (kept.length > 0) settings.hooks[eventName] = kept
+    else delete settings.hooks[eventName]
+  }
+
   if (mode === 'install') {
-    for (const eventName of PRESENT) {
+    for (const eventName of INSTALL_EVENTS) {
       const groups = Array.isArray(settings.hooks[eventName]) ? settings.hooks[eventName] : []
-      const already = groups.some(
-        (group) => Array.isArray(group?.hooks) && group.hooks.some(isOurHandler),
-      )
-      if (!already) {
-        groups.push({ hooks: [{ type: 'command', command: hookCommand, timeout: 15 }] })
-      }
+      groups.push({ hooks: [{ type: 'command', command: hookCommand, timeout: 15 }] })
       settings.hooks[eventName] = groups
     }
-
     if (!isPlainObject(settings.permissions)) settings.permissions = {}
     const allow = Array.isArray(settings.permissions.allow) ? settings.permissions.allow : []
     if (!allow.includes(allowRule)) allow.push(allowRule)
     settings.permissions.allow = allow
-  } else {
-    for (const eventName of PRESENT) {
-      const groups = Array.isArray(settings.hooks[eventName]) ? settings.hooks[eventName] : []
-      const keptGroups = []
-      for (const group of groups) {
-        const handlers = Array.isArray(group?.hooks) ? group.hooks : []
-        const filtered = handlers.filter((handler) => !isOurHandler(handler))
-        if (filtered.length === handlers.length) keptGroups.push(group)
-        else if (filtered.length > 0) keptGroups.push({ ...group, hooks: filtered })
-      }
-      if (keptGroups.length > 0) settings.hooks[eventName] = keptGroups
-      else delete settings.hooks[eventName]
-    }
-    if (Array.isArray(settings.permissions?.allow)) {
-      settings.permissions.allow = settings.permissions.allow.filter((rule) => rule !== allowRule)
-    }
+  } else if (Array.isArray(settings.permissions?.allow)) {
+    settings.permissions.allow = settings.permissions.allow.filter((rule) => rule !== allowRule)
   }
+
+  if (Object.keys(settings.hooks).length === 0) delete settings.hooks
 
   const json = JSON.stringify(settings, null, 2) + '\n'
   await writeFile(settingsPath, Buffer.from(json, 'utf8'))
   console.log(
-    JSON.stringify({ ok: true, mode, settingsPath, hookCommand, events: [...PRESENT], allowRule }),
+    JSON.stringify({ ok: true, mode, settingsPath, hookCommand, events: INSTALL_EVENTS, allowRule }),
   )
 }
 

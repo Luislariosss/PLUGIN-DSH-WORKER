@@ -228,20 +228,22 @@ TAREA:
 ```
 
 `mcp/notify.mjs`: hook de Claude Code para que los avisos de "DSH terminó" lleguen a Claude.
-Se registra en **dos eventos** (`UserPromptSubmit` y `Stop`), así el aviso llega en cuanto Claude
-está en un turno y se engancha al siguiente prompt si ya estaba idle. Lee stdin (JSON del hook,
-campo `hook_event_name`), lee eventos no ackeados de `events.jsonl` (según `cursor.json`), e
-imprime en stdout **una sola línea JSON**:
+Se registra **solo en `UserPromptSubmit`** (el comando lleva el marcador `--dsh-bridge-hook`):
+`additionalContext` solo es válido en ese evento, así que en `Stop` —hook que instalaban versiones
+anteriores— no se entrega nada ni se marca como leído, y el aviso sale en el siguiente prompt.
+Lee stdin (JSON del hook, campo `hook_event_name`), lee eventos no ackeados de `events.jsonl`
+(según `cursor.json`), e imprime en stdout **una sola línea JSON**:
 
 ```json
 {"hookSpecificOutput":{"hookEventName":"<hook_event_name>","additionalContext":"…texto con los avisos de DSH…"}}
 ```
 
 Reglas:
-- `hookEventName` = el `hook_event_name` recibido por stdin (`UserPromptSubmit` o `Stop`); si no
-  llega, `UserPromptSubmit`.
+- `hookEventName` = el `hook_event_name` recibido por stdin; si no llega, `UserPromptSubmit`.
+- Si el evento no es `UserPromptSubmit`, sale 0 sin imprimir y **sin avanzar el cursor**.
 - Solo imprime cuando hay eventos nuevos; sin eventos no imprime nada y sale 0.
-- Hace ack del último `seq` entregado (en `cursor.json`) para no repetir el aviso.
+- Hace ack del último `seq` entregado (en `cursor.json`, escribiendo el máximo entre el cursor
+  actual y ese `seq`) para no repetir el aviso ni retroceder.
 - Siempre exit 0 y nunca lanza: un hook que falla molesta; un aviso perdido no es crítico.
 - El texto debe leerse como información de estado, no como orden de sistema, p. ej.:
   `"DSH terminó la tarea tsk_ab12 (sesión session-7): <resumen>"`.
@@ -255,8 +257,10 @@ Reglas:
    `claude mcp add --scope user --transport stdio dsh-bridge -- <node> <abs>\mcp\server.mjs`.
    (`add-json` falla con el paso de argumentos de PowerShell en esta versión de Claude Code.)
 3. Ejecuta `node scripts/merge-claude-settings.mjs install <abs>\mcp\notify.mjs`: fusiona en
-   `~/.claude/settings.json` los hooks `UserPromptSubmit` y `Stop` y el permiso
-   `mcp__dsh-bridge` (backup `.bak-<timestamp>`, preservando la forma de array y sin BOM).
+   `~/.claude/settings.json` el hook `UserPromptSubmit` y el permiso `mcp__dsh-bridge` (backup
+   `.bak-<timestamp>`, preservando la forma de array y sin BOM). Es idempotente: primero quita los
+   handlers propios —reconocidos por el marcador `--dsh-bridge-hook` o por una instalación previa
+   con `notify.mjs`— y también los viejos de `Stop`, y luego deja uno solo con la ruta actual.
 4. Añade a `~/.claude/CLAUDE.md` un bloque gestionado
    `<!-- dsh-bridge:start --> … <!-- dsh-bridge:end -->` explicando cuándo usar `dsh_delegate`.
 5. Imprime cómo verificar: `claude mcp list`, `claude mcp get dsh-bridge`, y un ejemplo de frase.
