@@ -24,7 +24,7 @@ const INSTALL_EVENTS = ['UserPromptSubmit']
 const CLEAN_EVENTS = ['UserPromptSubmit', 'Stop'] // Stop: hooks de versiones anteriores
 const hookCommand = mode === 'install' ? `node "${notifyPath}" ${HOOK_MARKER}` : null
 // Reglas por herramienta (nunca el servidor entero: danger-full-access no debe quedar autorizado).
-const TOOL_NAMES = ['dsh_delegate', 'dsh_list', 'dsh_status', 'dsh_result', 'dsh_followup', 'dsh_cancel', 'dsh_inbox']
+const TOOL_NAMES = ['dsh_delegate', 'dsh_list', 'dsh_status', 'dsh_result', 'dsh_followup', 'dsh_cancel', 'dsh_watch', 'dsh_inbox']
 const ALLOW_RULES = TOOL_NAMES.map((tool) => `mcp__dsh-bridge__${tool}`)
 // Regla antigua que autorizaba todo el MCP: se quita al instalar (migración) y al desinstalar.
 const LEGACY_ALLOW_RULE = 'mcp__dsh-bridge'

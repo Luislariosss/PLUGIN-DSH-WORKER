@@ -31,8 +31,10 @@ Tienes el MCP \`dsh-bridge\` conectado. DeepSeek Harness es otro agente del usua
   devolver) y el \`cwd\` absoluto correcto.
 - \`dsh_delegate\` espera el resultado (wait_seconds, 600 s por defecto) y te lo devuelve; úsalo
   como entrada para seguir tú.
-- Para trabajo largo: \`wait_seconds: 0\` y luego \`dsh_result\` / \`dsh_status\`; los avisos de
-  finalización llegan solos por hooks (\`dsh_inbox\` también los lista).
+- Para trabajo largo: \`wait_seconds: 0\` y luego \`dsh_watch\` (con el task_id o sin él) para
+  **monitorearlo activamente**: se queda bloqueada hasta que DSH entregue y te despierta con
+  la entrega. Al expirar, vuelve a llamar a \`dsh_watch\` en vez de terminar la sesión con
+  trabajo en curso. Los avisos también llegan solos por hooks (\`dsh_inbox\` los lista).
 - No delegues secretos ni credenciales: DSH ejecuta con su propio sandbox y sus propias
   aprobaciones.
 ${END}`

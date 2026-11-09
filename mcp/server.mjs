@@ -222,6 +222,24 @@ const TOOLS = [
     },
   },
   {
+    name: 'dsh_watch',
+    description:
+      'Monitorea ACTIVAMENTE una tarea de DSH: se queda esperando (bloqueante) hasta que DSH entregue, ' +
+      'pida aprobación (waiting-input) o se agote timeout_seconds. Úsala justo después de dsh_delegate ' +
+      '(con o sin task_id) en vez de consultar a mano o terminar la sesión: ella te despierta con la entrega. ' +
+      'Sin task_id observa TODAS las tareas activas y retorna en cuanto alguna termine. Si expira sin entrega, ' +
+      'devuelve el estado y vuelve a llamarla para seguir monitoreando; no termines la sesión con tareas en curso.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        task_id: { type: 'string', description: 'task_id a vigilar (opcional; sin él vigila todas las tareas activas).' },
+        timeout_seconds: { type: 'number', description: 'Cuánto mantenerse bloqueada antes de devolver (default 1800, máx 3600).' },
+        interval_seconds: { type: 'number', description: 'Frecuencia de sondeo en segundos (default 5, mínimo 1).' },
+      },
+    },
+  },
+  {
     name: 'dsh_inbox',
     description: 'Lee los avisos de finalización de DSH pendientes (tareas que terminaron desde la última lectura) y opcionalmente los marca como leídos.',
     inputSchema: {
@@ -231,6 +249,68 @@ const TOOLS = [
     },
   },
 ]
+
+async function sleepSeconds(seconds) {
+  await new Promise((resolve) => setTimeout(resolve, Math.max(0, seconds) * 1000))
+}
+
+async function toolWatch(args) {
+  const taskId = typeof args?.task_id === 'string' && args.task_id.length > 0 ? args.task_id : null
+  const timeoutSeconds = Number.isFinite(args?.timeout_seconds)
+    ? Math.min(3600, Math.max(0, Number(args.timeout_seconds)))
+    : 1800
+  const intervalSeconds = Number.isFinite(args?.interval_seconds)
+    ? Math.min(60, Math.max(1, Number(args.interval_seconds)))
+    : 5
+  const deadline = Date.now() + timeoutSeconds * 1000
+
+  if (taskId) {
+    // Vigila una tarea concreta: usa el endpoint /wait (long-poll del puente).
+    let current = await api('GET', `/v1/tasks/${encodeURIComponent(taskId)}`, undefined, 30000)
+    while (!FINAL.has(current.status) && current.status !== 'waiting-input') {
+      const remaining = deadline - Date.now()
+      if (remaining < 500) break
+      const timeoutMs = Math.max(1000, Math.min(25000, remaining))
+      current = await api('POST', `/v1/tasks/${encodeURIComponent(taskId)}/wait`, { timeoutMs }, 40000)
+    }
+    if (FINAL.has(current.status) || current.status === 'waiting-input') {
+      return `👀 DSH entregó (vigilancia activa)\n\n${formatTask(current)}`
+    }
+    return (
+      `👀 Sin entrega todavía (${taskHeader(current)})\n\n` +
+      `Lancé el watchdog ${timeoutSeconds} s y DSH sigue trabajando. Llama de nuevo a dsh_watch ` +
+      `(mismo task_id) para seguir monitoreando en vez de terminar la sesión.`
+    )
+  }
+
+  // Sin task_id: vigila todas las tareas activas hasta que alguna termine o pida aprobación.
+  let finished = new Set()
+  let active = []
+  for (;;) {
+    const data = await api('GET', '/v1/tasks', undefined, 30000)
+    const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+    active = tasks.filter((task) => !FINAL.has(task.status) && task.status !== 'waiting-input')
+    const delivered = tasks.filter(
+      (task) => (FINAL.has(task.status) || task.status === 'waiting-input') && !finished.has(task.taskId),
+    )
+    if (delivered.length > 0) {
+      for (const task of delivered) finished.add(task.taskId)
+      const seen = delivered.map((task) => formatTask(task)).join('\n\n---\n\n')
+      return `👀 DSH entregó (vigilancia activa)\n\n${seen}`
+    }
+    const remaining = deadline - Date.now()
+    if (remaining < 500 || active.length === 0) break
+    await sleepSeconds(Math.min(intervalSeconds, Math.max(1, remaining / 1000)))
+  }
+  if (active.length === 0) {
+    return '👀 Sin tareas activas de DSH que monitorear.'
+  }
+  const lista = active.map((task) => `- ${task.taskId} [${task.status}] ${task.cwd}`).join('\n')
+  return (
+    `👀 Sin entrega todavía. Tareas en curso:\n${lista}\n\n` +
+    `Llama de nuevo a dsh_watch (sin task_id) para seguir monitoreando; no termines la sesión con trabajo en curso.`
+  )
+}
 
 async function toolDelegate(args) {
   const taskText = String(args?.task ?? '').trim()
@@ -335,6 +415,7 @@ const HANDLERS = {
   dsh_followup: toolFollowup,
   dsh_cancel: toolCancel,
   dsh_inbox: toolInbox,
+  dsh_watch: toolWatch,
 }
 
 function send(message) {
@@ -362,7 +443,9 @@ async function handle(message) {
       instructions:
         'Puente a DeepSeek Harness (DSH), el otro agente de Luis. Usa dsh_delegate para mandarle trabajo ' +
         '(su Lead puede usar Agent Teams/workers) y recibe el resultado final. Avisos de trabajos terminados: ' +
-        'dsh_inbox. Cuando Luis diga "pásalo a DSH", "delega esto", "que lo haga DeepSeek" o similar, usa ' +
+        'dsh_inbox. Monitoreo activo: tras dsh_delegate llama a dsh_watch (con task_id o sin él) y se queda ' +
+        'bloqueada hasta que DSH entregue; al expirar, vuelve a llamarla en vez de terminar la sesión con ' +
+        'trabajo en curso. Cuando Luis diga "pásalo a DSH", "delega esto", "que lo haga DeepSeek" o similar, usa ' +
         'dsh_delegate con una tarea autosuficiente y el cwd correcto.',
     })
     return

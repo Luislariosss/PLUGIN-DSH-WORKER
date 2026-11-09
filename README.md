@@ -28,15 +28,19 @@ Sesión real de DSH en su GUI  →  su Lead puede usar Agent Teams (workers)
 | `dsh_delegate` | Manda una tarea a DSH y espera el resultado final (texto autosuficiente). `wait_seconds` por defecto 600 s (máx. 3600; `0` = no esperar). La sesión es real, se ve en el GUI de DSH y su Lead puede usar `spawn_teammate` / `team_task_*`. |
 | `dsh_followup` | Sigue el mismo hilo de DSH con otra instrucción. |
 | `dsh_result` / `dsh_status` / `dsh_list` | Recogen y consultan el estado del trabajo delegado. |
+| `dsh_watch` | **Monitoreo activo**: se queda bloqueada hasta que DSH entregue (o pida aprobación) y te despierta con la entrega. Con `task_id` vigila esa tarea; sin él, vigila todas las activas. Al expirar sin entrega devuelve el estado: llama otra vez en vez de terminar la sesión. |
 | `dsh_cancel` | Cancela una tarea que sigue corriendo. |
 | `dsh_inbox` | Lista los avisos de finalización pendientes (`done`, `error`, `waiting-input`, `cancelled`) y los marca como leídos (salvo `ack: false`). |
 
-Y el **aviso de terminado**: cuando DSH acaba, el resultado vuelve en la propia llamada
-`dsh_delegate` si esperaste. Si el trabajo se dejó en segundo plano, los avisos llegan en tu
-**siguiente mensaje** mediante el único hook que se instala, `UserPromptSubmit` (el comando lleva el
-marcador `--dsh-bridge-hook`), o puedes leerlos con `dsh_inbox`. `additionalContext` solo es válido
-en ese evento, así que no se instala en `Stop`; si te queda un hook de `Stop` de una versión
-anterior, el instalador lo quita y `notify.mjs` lo ignora.
+Y el **aviso de terminado** + **monitoreo activo**: `dsh_delegate` espera el resultado si le das
+`wait_seconds` (600 s por defecto). Para trabajo largo, deja `wait_seconds: 0` y llama a
+`dsh_watch`: se queda bloqueada (hasta 3600 s) y te **despierta con la entrega**, sin que tengas
+que revisar a mano. Al expirar sin entrega devuelve el estado y vuelves a llamarla. Si el trabajo
+se dejó en segundo plano sin vigilar, los avisos llegan en tu **siguiente mensaje** mediante el
+único hook que se instala, `UserPromptSubmit` (el comando lleva el marcador `--dsh-bridge-hook`),
+o puedes leerlos con `dsh_inbox`. `additionalContext` solo es válido en ese evento, así que no se
+instala en `Stop`; si te queda un hook de `Stop` de una versión anterior, el instalador lo quita y
+`notify.mjs` lo ignora. La skill `dsh-worker` (en `skills/`) define el protocolo de monitoreo.
 
 ## Instalación
 
@@ -66,7 +70,7 @@ El instalador:
 
 - registra el MCP `dsh-bridge` a nivel usuario (`claude mcp add --scope user --transport stdio …`);
 - añade el hook `UserPromptSubmit` (con marcador `--dsh-bridge-hook`) en `~/.claude/settings.json`
-  y **7 reglas por herramienta**: `mcp__dsh-bridge__dsh_delegate`, `mcp__dsh-bridge__dsh_list`,
+  y **8 reglas por herramienta**: `mcp__dsh-bridge__dsh_delegate`, `mcp__dsh-bridge__dsh_list`,
   `mcp__dsh-bridge__dsh_status`, `mcp__dsh-bridge__dsh_result`, `mcp__dsh-bridge__dsh_followup`,
   `mcp__dsh-bridge__dsh_cancel` y `mcp__dsh-bridge__dsh_inbox`. No autoriza el servidor MCP entero.
   El merge se hace en Node (conserva otros hooks y no escribe BOM). Reinstalar es idempotente: quita
@@ -204,7 +208,7 @@ carpeta con la variable de entorno `DSH_BRIDGE_DIR` (la leen el MCP y el hook).
   se valida antes de crear la sesión: si es `danger-full-access` y no hay `allowFullAccess: true`, se
   rechaza con **403** (`permission/forbidden`). Esto cubre tanto la petición como la config del plugin.
   Es un ajuste explícito de Luis; no lo actives por defecto.
-- El permiso de Claude Code se concede **por herramienta** (las 7 reglas `mcp__dsh-bridge__dsh_*`
+- El permiso de Claude Code se concede **por herramienta** (las 8 reglas `mcp__dsh-bridge__dsh_*`
   listadas en la instalación), no a todo el servidor MCP: una herramienta nueva que se añada al MCP
   pedirá confirmación.
 - Si una sesión pide aprobación, se responde en el **GUI de DSH**; la tarea queda
@@ -224,7 +228,7 @@ carpeta con la variable de entorno `DSH_BRIDGE_DIR` (la leen el MCP y el hook).
 - **No llegan avisos**: se entregan en el siguiente mensaje o con `dsh_inbox`. Revisa
   `events.jsonl` y `cursor.json` en la carpeta del puente.
 - **Regla de permiso antigua (`mcp__dsh-bridge` a secas)**: vuelve a ejecutar `install-claude.ps1`;
-  migra la regla a las 7 reglas por herramienta.
+  migra la regla a las 8 reglas por herramienta.
 - **Tests**: ejecútalos desde la raíz del repo con `node tests\…`. `selftest.mjs` no necesita DSH;
   `e2e.mjs` y `mcp-e2e.mjs` sí.
 
@@ -235,6 +239,7 @@ carpeta con la variable de entorno `DSH_BRIDGE_DIR` (la leen el MCP y el hook).
 | `plugin/` | Bundle DSH (`@local/dsh-claude-bridge`): servidor HTTP local + puente a `sessionController`. |
 | `mcp/` | Servidor MCP stdio para Claude Code (`server.mjs`), hook de avisos (`notify.mjs`), `selftest.mjs`. |
 | `scripts/` | `install-claude.ps1` / `uninstall-claude.ps1` + merges de settings/CLAUDE.md en Node. |
+| `skills/dsh-worker/` | Skill que define el protocolo de monitoreo activo (delegar + `dsh_watch` hasta la entrega). |
 | `tests/` | `e2e.mjs` (HTTP), `mcp-e2e.mjs` (MCP completo), `debug-once.mjs` (diagnóstico). |
 | `docs/PROTOCOL.md` | Contrato congelado entre las tres piezas. |
 | `docs/PARA-QUE-SIRVE.md` | Casos de uso, límites y estado verificado. |

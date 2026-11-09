@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Autoprueba del servidor MCP: lanza mcp/server.mjs por stdio, hace initialize + tools/list
- * y verifica que estén los 7 tools. No necesita que DSH esté corriendo.
+ * y verifica que estén los 8 tools. No necesita que DSH esté corriendo.
  *
  * Uso: node mcp/selftest.mjs
  */
@@ -12,7 +12,7 @@ import { createInterface } from 'node:readline'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const serverPath = path.join(here, 'server.mjs')
-const EXPECTED = ['dsh_cancel', 'dsh_delegate', 'dsh_followup', 'dsh_inbox', 'dsh_list', 'dsh_result', 'dsh_status']
+const EXPECTED = ['dsh_cancel', 'dsh_delegate', 'dsh_followup', 'dsh_inbox', 'dsh_list', 'dsh_result', 'dsh_status', 'dsh_watch']
 
 const child = spawn(process.execPath, [serverPath], { stdio: ['pipe', 'pipe', 'inherit'] })
 const rl = createInterface({ input: child.stdout, crlfDelay: Infinity })

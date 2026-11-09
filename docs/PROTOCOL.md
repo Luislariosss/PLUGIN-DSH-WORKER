@@ -232,6 +232,7 @@ Tools (nombres estables):
 | `dsh_result` | `{ task_id }` | resultado final (si aún no termina, lo dice) |
 | `dsh_followup` | `{ task_id, message }` | envía seguimiento al mismo hilo |
 | `dsh_cancel` | `{ task_id }` | cancela |
+| `dsh_watch` | `{ task_id?, timeout_seconds?, interval_seconds? }` | **monitoreo activo**: se bloquea hasta que la tarea (o cualquier tarea activa si no hay `task_id`) llegue a done/error/cancelled/waiting-input y devuelve la entrega; si expira, devuelve el estado para volver a llamarla en vez de terminar la sesión |
 | `dsh_inbox` | `{ ack?: boolean }` | eventos de finalización pendientes; `ack:true` los marca leídos |
 
 - Leer `state.json` y `token` con una caché de 2 s, y volver a leerlos si falla la conexión (el plugin puede reiniciarse con otro puerto).
@@ -289,7 +290,7 @@ Reglas:
 3. Ejecuta `node scripts/merge-claude-settings.mjs install <abs>\mcp\notify.mjs`: fusiona en
    `~/.claude/settings.json` el hook `UserPromptSubmit` y los permisos **por herramienta**
    `mcp__dsh-bridge__dsh_delegate`, `…__dsh_list`, `…__dsh_status`, `…__dsh_result`,
-   `…__dsh_followup`, `…__dsh_cancel`, `…__dsh_inbox` (nunca `mcp__dsh-bridge` completo: la regla
+   `…__dsh_followup`, `…__dsh_cancel`, `…__dsh_watch`, `…__dsh_inbox` (nunca `mcp__dsh-bridge` completo: la regla
    antigua se quita al instalar y al desinstalar; así una herramienta nueva del MCP vuelve a pedir
    confirmación) (backup
    `.bak-<timestamp>`, preservando la forma de array y sin BOM). Es idempotente: primero quita los
