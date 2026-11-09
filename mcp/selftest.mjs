@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Autoprueba del servidor MCP: lanza mcp/server.mjs por stdio, hace initialize + tools/list
- * y verifica que estén los 8 tools. No necesita que DSH esté corriendo.
+ * y verifica que estén los 9 tools y la capacidad del canal de avisos. No necesita DSH ni
+ * Claude Code.
  *
  * Uso: node mcp/selftest.mjs
  */
@@ -12,7 +13,17 @@ import { createInterface } from 'node:readline'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const serverPath = path.join(here, 'server.mjs')
-const EXPECTED = ['dsh_cancel', 'dsh_delegate', 'dsh_followup', 'dsh_inbox', 'dsh_list', 'dsh_result', 'dsh_status', 'dsh_watch']
+const EXPECTED = [
+  'dsh_cancel',
+  'dsh_channel_ack',
+  'dsh_delegate',
+  'dsh_followup',
+  'dsh_inbox',
+  'dsh_list',
+  'dsh_result',
+  'dsh_status',
+  'dsh_watch',
+]
 
 const child = spawn(process.execPath, [serverPath], { stdio: ['pipe', 'pipe', 'inherit'] })
 const rl = createInterface({ input: child.stdout, crlfDelay: Infinity })
@@ -62,6 +73,10 @@ async function main() {
   const init = await request({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'selftest', version: '1.0.0' } } })
   if (!init?.result?.serverInfo?.name) return fail('initialize sin serverInfo')
   console.log('initialize OK →', init.result.serverInfo.name, init.result.serverInfo.version, 'protocol', init.result.protocolVersion)
+  if (!init.result.capabilities?.experimental?.['claude/channel']) {
+    return fail('initialize sin capabilities.experimental["claude/channel"] (aviso push)')
+  }
+  console.log('aviso push OK → capacidad claude/channel declarada')
   send({ jsonrpc: '2.0', method: 'notifications/initialized' })
 
   const list = await request({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })

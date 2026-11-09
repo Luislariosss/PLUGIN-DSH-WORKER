@@ -1,11 +1,12 @@
-﻿<#
+<#
 .SYNOPSIS
     Desinstala el puente Claude Code <-> DeepSeek Harness de Claude Code.
 
 .DESCRIPTION
     - Quita el MCP `dsh-bridge` (scope user).
     - Quita los hooks de aviso y los permisos mcp__dsh-bridge__dsh_* (y la regla antigua
-      mcp__dsh-bridge) de ~/.claude/settings.json.
+      mcp__dsh-bridge) de ~/.claude/settings.json, y el `crossSessionInbound: "accept"`
+      que puso el instalador.
     - Quita el bloque gestionado del CLAUDE.md.
     Hace backups .bak-<timestamp>. No toca el plugin de DSH (quítalo desde la página Plugins).
 #>

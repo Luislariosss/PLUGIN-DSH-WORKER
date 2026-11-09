@@ -8,6 +8,9 @@ Plugin **Host** que corre dentro de DeepSeek Harness (perfil `desktop`). Abre un
 - esperar su finalización y devolver el **texto final**,
 - enviar seguimientos, cancelar y leer avisos de terminación.
 
+`events.jsonl` es además la fuente del **aviso directo**: el servidor MCP lo sondea y empuja cada
+evento al buzón de la sesión de Claude Code (ver `../README.md`, "Aviso directo").
+
 Contrato completo: `../docs/PROTOCOL.md`.
 
 ## Instalación

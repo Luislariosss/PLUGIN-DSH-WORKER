@@ -4,13 +4,16 @@
 
 .DESCRIPTION
     - Registra el servidor MCP `dsh-bridge` a nivel usuario (scope user).
-    - Añade el hook UserPromptSubmit (marcador `--dsh-bridge-hook`) para que los avisos de
-      "DSH terminó" lleguen a Claude; quita hooks propios duplicados y los viejos de Stop.
+    - Añade el hook UserPromptSubmit (marcador `--dsh-bridge-hook`) como red de seguridad:
+      los avisos también llegan en el siguiente mensaje si el aviso directo no se pudo entregar.
     - Añade permisos por herramienta (mcp__dsh-bridge__dsh_*) para no preguntar en cada llamada;
       no autoriza el MCP completo, así que danger-full-access no queda pre-aprobado.
+    - Deja `crossSessionInbound: "accept"` en settings.json (si no había un valor) para que
+      Claude Code entregue el aviso directo que el MCP escribe en el buzón de la sesión.
     - Añade un bloque gestionado en ~/.claude/CLAUDE.md explicando cuándo delegar.
     Hace backups .bak-<timestamp>. No instala el plugin de DSH: eso se hace desde la página
-    Plugins de DSH (o con el gestor de plugins del Host).
+    Plugins de DSH (o con el gestor de plugins del Host). Reinicia Claude Code después para
+    que cargue el MCP nuevo.
 
 .PARAMETER SkipHealthCheck
     No comprobar que el plugin del puente responda (útil si DSH está cerrado).
@@ -94,7 +97,7 @@ Write-Ok 'MCP dsh-bridge registrado'
 & claude mcp get dsh-bridge 2>&1 | Out-Host
 
 if (-not $SkipHooks) {
-    Write-Step 'Instalando el hook de aviso (UserPromptSubmit) y permisos mcp__dsh-bridge__dsh_*'
+    Write-Step 'Instalando hook de aviso, permisos mcp__dsh-bridge__dsh_* y crossSessionInbound'
     & $nodePath $mergeSettings install $notifyPath
     if ($LASTEXITCODE -ne 0) { throw "merge-claude-settings.mjs falló con código $LASTEXITCODE" }
     Write-Ok 'settings.json actualizado (con backup)'
@@ -108,8 +111,13 @@ if (-not $SkipClaudeMd) {
 }
 
 Write-Host ''
-Write-Host 'LISTO. Verifica con:' -ForegroundColor Green
-Write-Host '  claude mcp list'
+Write-Host 'LISTO. Reinicia Claude Code (o abre una sesión nueva) para que cargue el MCP nuevo.' -ForegroundColor Green
+Write-Host 'Verifica con:' -ForegroundColor Green
+Write-Host '  claude mcp list                                  # dsh-bridge debe salir Connected'
+Write-Host '  node "<repo>\tests\push-e2e.mjs"                 # aviso directo sin Claude ni DSH'
+Write-Host 'Aviso directo: al terminar una tarea, el MCP escribe en el buzón de la sesión y' -ForegroundColor Green
+Write-Host 'Claude la atiende al momento. En Claude Code, dsh_status muestra el transporte:' -ForegroundColor Green
+Write-Host '  "Aviso directo: buzón de esta sesión de Claude Code (env|registro)".'
 Write-Host 'Y en Claude Code prueba:' -ForegroundColor Green
 Write-Host '  "Pasale a DSH: responde solo con la palabra PUENTE_OK"'
 Write-Host ''

@@ -24,10 +24,24 @@ const INSTALL_EVENTS = ['UserPromptSubmit']
 const CLEAN_EVENTS = ['UserPromptSubmit', 'Stop'] // Stop: hooks de versiones anteriores
 const hookCommand = mode === 'install' ? `node "${notifyPath}" ${HOOK_MARKER}` : null
 // Reglas por herramienta (nunca el servidor entero: danger-full-access no debe quedar autorizado).
-const TOOL_NAMES = ['dsh_delegate', 'dsh_list', 'dsh_status', 'dsh_result', 'dsh_followup', 'dsh_cancel', 'dsh_watch', 'dsh_inbox']
+const TOOL_NAMES = [
+  'dsh_delegate',
+  'dsh_list',
+  'dsh_status',
+  'dsh_result',
+  'dsh_followup',
+  'dsh_cancel',
+  'dsh_watch',
+  'dsh_inbox',
+  'dsh_channel_ack',
+]
 const ALLOW_RULES = TOOL_NAMES.map((tool) => `mcp__dsh-bridge__${tool}`)
 // Regla antigua que autorizaba todo el MCP: se quita al instalar (migración) y al desinstalar.
 const LEGACY_ALLOW_RULE = 'mcp__dsh-bridge'
+// El aviso directo llega por el buzón de la sesión (cross-session messaging). Sin este
+// valor, Claude Code retiene el mensaje cuando la sesión corre en bypass permissions.
+const INBOUND_KEY = 'crossSessionInbound'
+const INBOUND_VALUE = 'accept'
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -86,6 +100,7 @@ async function main() {
     else delete settings.hooks[eventName]
   }
 
+  let inbound = { key: INBOUND_KEY, value: null }
   if (mode === 'install') {
     for (const eventName of INSTALL_EVENTS) {
       const groups = Array.isArray(settings.hooks[eventName]) ? settings.hooks[eventName] : []
@@ -99,11 +114,25 @@ async function main() {
       if (!allow.includes(rule)) allow.push(rule)
     }
     settings.permissions.allow = allow
-  } else if (Array.isArray(settings.permissions?.allow)) {
-    const removed = new Set([LEGACY_ALLOW_RULE, ...ALLOW_RULES])
-    settings.permissions.allow = settings.permissions.allow.filter((rule) => !removed.has(rule))
-    if (settings.permissions.allow.length === 0) delete settings.permissions.allow
-    if (Object.keys(settings.permissions).length === 0) delete settings.permissions
+    // Sin crossSessionInbound=accept, una sesión en bypass permissions retiene los avisos.
+    if (settings[INBOUND_KEY] === undefined) {
+      settings[INBOUND_KEY] = INBOUND_VALUE
+      inbound = { key: INBOUND_KEY, value: INBOUND_VALUE, added: true }
+    } else {
+      inbound = { key: INBOUND_KEY, value: settings[INBOUND_KEY], added: false }
+    }
+  } else {
+    if (Array.isArray(settings.permissions?.allow)) {
+      const removed = new Set([LEGACY_ALLOW_RULE, ...ALLOW_RULES])
+      settings.permissions.allow = settings.permissions.allow.filter((rule) => !removed.has(rule))
+      if (settings.permissions.allow.length === 0) delete settings.permissions.allow
+      if (Object.keys(settings.permissions).length === 0) delete settings.permissions
+    }
+    // Solo se quita el valor que puso el instalador (el default de Claude Code es ausente).
+    if (settings[INBOUND_KEY] === INBOUND_VALUE) {
+      delete settings[INBOUND_KEY]
+      inbound = { key: INBOUND_KEY, value: null, removed: true }
+    }
   }
 
   if (Object.keys(settings.hooks).length === 0) delete settings.hooks
@@ -119,6 +148,7 @@ async function main() {
       events: INSTALL_EVENTS,
       allowRules: mode === 'install' ? ALLOW_RULES : [],
       removedLegacyRule: LEGACY_ALLOW_RULE,
+      inbound,
     }),
   )
 }

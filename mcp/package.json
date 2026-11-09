@@ -1,6 +1,6 @@
 {
   "name": "dsh-bridge-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Servidor MCP stdio que conecta Claude Code con DeepSeek Harness (plugin @local/dsh-claude-bridge)",

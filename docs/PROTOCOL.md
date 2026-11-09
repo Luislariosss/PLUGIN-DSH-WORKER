@@ -17,7 +17,8 @@ Sesión real de DSH visible en el GUI (con Agent Teams disponibles)
 ```
 
 Objetivo: Claude Code delega una tarea, DSH la ejecuta (puede usar sus workers/Agent Teams) y
-Claude recibe el resultado y los avisos de finalización.
+Claude recibe el resultado y, al terminar, un **aviso push** (despierta la sesión idle) o, si el
+buzón no está disponible, el aviso en el siguiente mensaje.
 
 ## 1. Archivos y rutas
 
@@ -29,7 +30,7 @@ Claude recibe el resultado y los avisos de finalización.
 | `token` | plugin (si no existe) | 64 chars hex + `\n`. Modo usuario. |
 | `state.json` | plugin al arrancar / dispose | `{ "version": 1, "host": "127.0.0.1", "port": 49777, "pid": 1234, "startedAt": 1762... }` |
 | `events.jsonl` | plugin | una línea JSON por evento de finalización (append-only) |
-| `cursor.json` | MCP (`dsh_inbox`, hook) | `{ "ackedSeq": 12 }` |
+| `cursor.json` | MCP (`dsh_inbox`, `dsh_channel_ack`, hook) | `{ "ackedSeq": 12 }` |
 | `tasks.json` | plugin (debounce ~300 ms, escritura atómica) | `{ "version": 1, "savedAt": 1762..., "tasks": Task[] }` con las 200 tareas más recientes (ver §2.1) |
 
 El plugin borra `state.json` en dispose. Si `state.json` no existe o el health check falla, el
@@ -219,8 +220,9 @@ Comportamiento:
 `mcp/server.mjs`: servidor MCP **stdio**, JSON-RPC 2.0 delimitado por líneas (`\n`), sin
 dependencias. Debe implementar: `initialize`, `notifications/initialized` (sin respuesta),
 `ping`, `tools/list`, `tools/call`. Protocol version: responder la del cliente si es una de
-`2024-11-05` / `2025-06-18`, si no `2025-06-18`. `serverInfo: { name: "dsh-bridge", version: "1.0.0" }`,
-`capabilities: { tools: {} }`.
+`2024-11-05` / `2025-06-18`, si no `2025-06-18`. `serverInfo: { name: "dsh-bridge", version: "1.1.0" }`,
+`capabilities: { tools: {}, experimental: { 'claude/channel': {} } }` (la segunda clave habilita el
+transporte 2 del aviso directo).
 
 Tools (nombres estables):
 
@@ -228,12 +230,13 @@ Tools (nombres estables):
 |---|---|---|
 | `dsh_delegate` | `{ task, cwd?, preset?, permission?, workers?, wait_seconds? }` | crea la tarea y espera (default 600 s, máx 3600) el resultado; devuelve texto final + `task_id`/`session_id`. Si expira: estado y cómo seguir. |
 | `dsh_list` | `{}` | lista tareas |
-| `dsh_status` | `{ task_id? }` | estado; sin id = health + tareas activas |
+| `dsh_status` | `{ task_id? }` | estado; sin id = health + tareas activas + transporte del aviso directo |
 | `dsh_result` | `{ task_id }` | resultado final (si aún no termina, lo dice) |
 | `dsh_followup` | `{ task_id, message }` | envía seguimiento al mismo hilo |
 | `dsh_cancel` | `{ task_id }` | cancela |
 | `dsh_watch` | `{ task_id?, timeout_seconds?, interval_seconds? }` | **monitoreo activo**: se bloquea hasta que la tarea (o cualquier tarea activa si no hay `task_id`) llegue a done/error/cancelled/waiting-input y devuelve la entrega; si expira, devuelve el estado para volver a llamarla en vez de terminar la sesión |
 | `dsh_inbox` | `{ ack?: boolean }` | eventos de finalización pendientes; `ack:true` los marca leídos |
+| `dsh_channel_ack` | `{ seq: number }` | confirma la entrega de un aviso push y hace `POST /v1/events/ack { seq }` |
 
 - Leer `state.json` y `token` con una caché de 2 s, y volver a leerlos si falla la conexión (el plugin puede reiniciarse con otro puerto).
 - HTTP con `fetch` y `AbortSignal.timeout(...)`; errores → `{ content: [{type:'text',text}], isError: true }`.
@@ -258,12 +261,13 @@ TAREA:
 <task>
 ```
 
-`mcp/notify.mjs`: hook de Claude Code para que los avisos de "DSH terminó" lleguen a Claude.
-Se registra **solo en `UserPromptSubmit`** (el comando lleva el marcador `--dsh-bridge-hook`):
-`additionalContext` solo es válido en ese evento, así que en `Stop` —hook que instalaban versiones
-anteriores— no se entrega nada ni se marca como leído, y el aviso sale en el siguiente prompt.
-Lee stdin (JSON del hook, campo `hook_event_name`), lee eventos no ackeados de `events.jsonl`
-(según `cursor.json`), e imprime en stdout **una sola línea JSON**:
+`mcp/notify.mjs`: hook de Claude Code (respaldo del aviso directo). Si el push no se pudo entregar
+o el evento quedó sin confirmar, el aviso llega cuando el usuario escribe, inyectado por el hook
+`UserPromptSubmit`. Se registra **solo en `UserPromptSubmit`** (el comando lleva el marcador
+`--dsh-bridge-hook`): `additionalContext` solo es válido en ese evento, así que en `Stop` —hook que
+instalaban versiones anteriores— no se entrega nada ni se marca como leído, y el aviso sale en el
+siguiente prompt. Lee stdin (JSON del hook, campo `hook_event_name`), lee eventos no ackeados de
+`events.jsonl` (según `cursor.json`), e imprime en stdout **una sola línea JSON**:
 
 ```json
 {"hookSpecificOutput":{"hookEventName":"<hook_event_name>","additionalContext":"…texto con los avisos de DSH…"}}
@@ -280,6 +284,47 @@ Reglas:
   `"DSH terminó la tarea tsk_ab12 (sesión session-7): <resumen>"`.
 
 
+### Aviso directo a Claude Code (push)
+
+Mientras la sesión de Claude Code está abierta, `mcp/server.mjs` sondea
+`GET /v1/events?since=<seq>` (default cada **2000 ms**; env `DSH_BRIDGE_CHANNEL_POLL_MS`, mínimo
+250) y empuja cada evento nuevo por el primer transporte que funcione:
+
+1. **Buzón de la propia sesión** (*cross-session messaging*). Descubrimiento:
+   `CLAUDE_CODE_MESSAGING_SOCKET` + `CLAUDE_CODE_MESSAGING_TOKEN` (los hereda el MCP de Claude
+   Code) o, si faltan, `~/.claude/sessions/<pid>.json` → `messagingSocketPath` y
+   `<pid>.<hash>.key` → `peerToken` (pid de `CLAUDE_PID` o del proceso padre). Se escribe NDJSON:
+   `{"type":"auth","token":"…"}` y `{"type":"user","message":{"role":"user","content":"…"}}`.
+   Es el único transporte que **despierta una sesión idle** (arranca un turno nuevo).
+2. **Canal MCP** `notifications/claude/channel` con
+   `{ content, meta: { seq, task_id, kind, session_id } }` (meta keys = identificadores). Solo
+   llega si la sesión habilitó el canal (`--channels` o
+   `--dangerously-load-development-channels server:dsh-bridge`); si no, Claude Code lo descarta.
+
+Reglas:
+
+- Al arrancar **no se empuja el backlog**: `lastPushedSeq = max(ackedSeq de cursor.json, lastSeq)`.
+  Los eventos viejos los entrega el hook en el siguiente mensaje.
+- Si el resultado de una tarea ya volvió dentro de `dsh_delegate` (estado final o
+  `waiting-input`), su evento **no se empuja** y se marca leído con `POST /v1/events/ack`.
+- Ningún transporte acusa recibo: el contenido incluye `Confirma la entrega con dsh_channel_ack
+  seq=<seq>`. `dsh_channel_ack` hace `POST /v1/events/ack { seq }` con el `seq` recibido (topado a
+  lo ya empujado). Sin confirmación, el hook `UserPromptSubmit` lo repite: nada se pierde.
+- `DSH_BRIDGE_CHANNEL=0` desactiva el push (solo hook + `dsh_inbox`).
+- `dsh_status` informa del transporte: `Aviso directo: buzón de esta sesión de Claude Code (env|registro)`
+  o `sin buzón detectado; …`.
+- Fallos de conexión no tumban el MCP: se registran una vez y se reintenta en el siguiente sondeo.
+
+Formato del aviso (`content`):
+
+```
+DSH terminó la tarea <task_id> (sesión DSH <sessionId>).
+
+<resumen ≤2000 caracteres>
+
+Resultado completo: dsh_result con task_id <task_id>. Confirma la entrega con dsh_channel_ack seq=<seq>.
+```
+
 ## 5. Instalación (scripts)
 
 `scripts/install-claude.ps1` (lo ejecuta el usuario o el agente):
@@ -290,14 +335,18 @@ Reglas:
 3. Ejecuta `node scripts/merge-claude-settings.mjs install <abs>\mcp\notify.mjs`: fusiona en
    `~/.claude/settings.json` el hook `UserPromptSubmit` y los permisos **por herramienta**
    `mcp__dsh-bridge__dsh_delegate`, `…__dsh_list`, `…__dsh_status`, `…__dsh_result`,
-   `…__dsh_followup`, `…__dsh_cancel`, `…__dsh_watch`, `…__dsh_inbox` (nunca `mcp__dsh-bridge` completo: la regla
-   antigua se quita al instalar y al desinstalar; así una herramienta nueva del MCP vuelve a pedir
-   confirmación) (backup
-   `.bak-<timestamp>`, preservando la forma de array y sin BOM). Es idempotente: primero quita los
-   handlers propios —reconocidos por el marcador `--dsh-bridge-hook` o por una instalación previa
-   con `notify.mjs`— y también los viejos de `Stop`, y luego deja uno solo con la ruta actual.
+   `…__dsh_followup`, `…__dsh_cancel`, `…__dsh_watch`, `…__dsh_inbox`, `…__dsh_channel_ack` (nunca
+   `mcp__dsh-bridge` completo: la regla antigua se quita al instalar y al desinstalar; así una
+   herramienta nueva del MCP vuelve a pedir confirmación) (backup `.bak-<timestamp>`, preservando
+   la forma de array y sin BOM). Es idempotente: primero quita los handlers propios —reconocidos
+   por el marcador `--dsh-bridge-hook` o por una instalación previa con `notify.mjs`— y también
+   los viejos de `Stop`, y luego deja uno solo con la ruta actual. Además deja
+   `crossSessionInbound: "accept"` si la clave no existía (el aviso directo se retiene con el
+   default en sesiones con bypass); al desinstalar se quita solo si vale `accept`.
 4. Añade a `~/.claude/CLAUDE.md` un bloque gestionado
    `<!-- dsh-bridge:start --> … <!-- dsh-bridge:end -->` explicando cuándo usar `dsh_delegate`.
-5. Imprime cómo verificar: `claude mcp list`, `claude mcp get dsh-bridge`, y un ejemplo de frase.
+5. Imprime cómo verificar: `claude mcp list`, `claude mcp get dsh-bridge`, `node tests\push-e2e.mjs`
+   y recuerda **reiniciar Claude Code** para que cargue el MCP nuevo.
 
-`scripts/uninstall-claude.ps1`: quita el MCP, el hook y el bloque de CLAUDE.md (con backups).
+`scripts/uninstall-claude.ps1`: quita el MCP, el hook, las reglas por herramienta, el
+`crossSessionInbound: "accept"` que puso el instalador y el bloque de CLAUDE.md (con backups).
